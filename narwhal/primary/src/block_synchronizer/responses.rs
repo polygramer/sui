@@ -1,26 +1,22 @@
-// Copyright (c) 2022, Mysten Labs, Inc.
+// Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
-use blake2::digest::Update;
 use config::{Committee, SharedWorkerCache};
 use crypto::PublicKey;
-use fastcrypto::{Digest, Hash};
-use std::{
-    collections::BTreeMap,
-    fmt::{Debug, Display, Formatter},
-};
+use fastcrypto::hash::{Digest, Hash, HashFunction};
+use std::fmt::{Debug, Display, Formatter};
 use thiserror::Error;
 use tracing::{error, warn};
-use types::{Certificate, CertificateDigest, Round};
+use types::{Certificate, CertificateDigest};
 
 // RequestID helps us identify an incoming request and
 // all the consequent network requests associated with it.
 #[derive(Clone, Copy, Default, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct RequestID(pub [u8; fastcrypto::DIGEST_LEN]);
+pub struct RequestID(pub [u8; crypto::DIGEST_LENGTH]);
 
 impl RequestID {
     // Create a request key (deterministically) from arbitrary data.
     pub fn new(data: &[u8]) -> Self {
-        RequestID(fastcrypto::blake2b_256(|hasher| hasher.update(data)))
+        RequestID(crypto::DefaultHashFunction::digest(data).into())
     }
 }
 
@@ -141,15 +137,7 @@ impl CertificatesResponse {
 }
 
 #[derive(Debug, Clone)]
-pub struct CertificateDigestsResponse {
-    // Certificate digests, grouped by round numbers.
-    pub certificate_ids: BTreeMap<Round, Vec<CertificateDigest>>,
-    pub from: PublicKey,
-}
-
-#[derive(Debug, Clone)]
 pub enum AvailabilityResponse {
-    CertificateDigest(CertificateDigestsResponse),
     Certificate(CertificatesResponse),
     Payload(PayloadAvailabilityResponse),
 }

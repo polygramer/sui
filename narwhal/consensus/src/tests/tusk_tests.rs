@@ -1,5 +1,5 @@
 // Copyright (c) 2021, Facebook, Inc. and its affiliates
-// Copyright (c) 2022, Mysten Labs, Inc.
+// Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 use super::*;
 
@@ -36,20 +36,29 @@ pub fn make_consensus_store(store_path: &std::path::Path) -> Arc<ConsensusStore>
 pub fn make_certificate_store(store_path: &std::path::Path) -> CertificateStore {
     const CERTIFICATES_CF: &str = "certificates";
     const CERTIFICATE_ID_BY_ROUND_CF: &str = "certificate_id_by_round";
+    const CERTIFICATE_ID_BY_ORIGIN_CF: &str = "certificate_id_by_origin";
 
     let rocksdb = rocks::open_cf(
         store_path,
         None,
-        &[CERTIFICATES_CF, CERTIFICATE_ID_BY_ROUND_CF],
+        &[
+            CERTIFICATES_CF,
+            CERTIFICATE_ID_BY_ROUND_CF,
+            CERTIFICATE_ID_BY_ORIGIN_CF,
+        ],
     )
     .expect("Failed creating database");
 
-    let (certificate_map, certificate_id_by_round_map) = reopen!(&rocksdb,
+    let (certificate_map, certificate_id_by_round_map, certificate_id_by_origin_map) = reopen!(&rocksdb,
         CERTIFICATES_CF;<CertificateDigest, Certificate>,
-        CERTIFICATE_ID_BY_ROUND_CF;<(Round, CertificateDigest), u8>
-    );
+        CERTIFICATE_ID_BY_ROUND_CF;<(Round, PublicKey), CertificateDigest>,
+        CERTIFICATE_ID_BY_ORIGIN_CF;<(PublicKey, Round), CertificateDigest>);
 
-    CertificateStore::new(certificate_map, certificate_id_by_round_map)
+    CertificateStore::new(
+        certificate_map,
+        certificate_id_by_round_map,
+        certificate_id_by_origin_map,
+    )
 }
 
 // Run for 4 dag rounds in ideal conditions (all nodes reference all other nodes). We should commit
@@ -339,6 +348,7 @@ async fn missing_leader() {
     let gc_depth = 50;
     let tusk = Tusk::new(committee.clone(), store.clone(), gc_depth);
     let metrics = Arc::new(ConsensusMetrics::new(&Registry::new()));
+
     let _consensus_handle = Consensus::spawn(
         committee,
         store,
@@ -397,6 +407,7 @@ async fn epoch_change() {
     let gc_depth = 50;
     let tusk = Tusk::new(committee.clone(), store.clone(), gc_depth);
     let metrics = Arc::new(ConsensusMetrics::new(&Registry::new()));
+
     let _consensus_handle = Consensus::spawn(
         committee.clone(),
         store,

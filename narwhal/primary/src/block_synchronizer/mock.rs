@@ -1,7 +1,7 @@
-// Copyright (c) 2022, Mysten Labs, Inc.
+// Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 use crate::block_synchronizer::{BlockHeader, BlockSynchronizeResult, Command};
-use fastcrypto::Hash;
+use fastcrypto::hash::Hash;
 use prometheus::IntGauge;
 use std::collections::HashMap;
 use tokio::sync::oneshot;
@@ -51,9 +51,6 @@ impl MockBlockSynchronizerCore {
             tokio::select! {
                 Some(command) = self.rx_commands.recv() => {
                     match command {
-                        Command::SynchronizeRange { .. } => {
-                            todo!("MockBlockSynchronizerCore for Command::SynchronizeRange is unimplemented!")
-                        }
                         Command::SynchronizeBlockHeaders { block_ids, respond_to } => {
                             let (times, results) = self
                                 .block_headers_expected_requests

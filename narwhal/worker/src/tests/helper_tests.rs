@@ -1,8 +1,8 @@
 // Copyright (c) 2021, Facebook, Inc. and its affiliates
-// Copyright (c) 2022, Mysten Labs, Inc.
+// Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 use super::*;
-use fastcrypto::Hash;
+use fastcrypto::hash::Hash;
 use store::rocks;
 use test_utils::{batch, temp_dir, test_network, CommitteeFixture, WorkerToWorkerMockServer};
 use types::BatchDigest;

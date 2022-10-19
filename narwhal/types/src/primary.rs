@@ -1,20 +1,21 @@
 // Copyright (c) 2021, Facebook, Inc. and its affiliates
-// Copyright (c) 2022, Mysten Labs, Inc.
+// Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 use crate::{
     error::{DagError, DagResult},
     serde::NarwhalBitmap,
     CertificateDigestProto,
 };
-use blake2::{digest::Update, VarBlake2b};
 use bytes::Bytes;
 use config::{Committee, Epoch, SharedWorkerCache, Stake, WorkerId, WorkerInfo};
 use crypto::{AggregateSignature, PublicKey, Signature};
 use dag::node_dag::Affiliated;
 use derive_builder::Builder;
 use fastcrypto::{
+    bls12381::BLS12381Signature,
+    hash::{Digest, Hash, HashFunction},
     traits::{AggregateAuthenticator, EncodeDecodeBase64, Signer, VerifyingKey},
-    Digest, Hash, SignatureService, Verifier, DIGEST_LEN,
+    SignatureService, Verifier,
 };
 use indexmap::IndexMap;
 use mysten_util_mem::MallocSizeOf;
@@ -36,7 +37,7 @@ pub struct Batch(pub Vec<Transaction>);
 #[derive(
     Clone, Copy, Serialize, Deserialize, Default, PartialEq, Eq, Hash, PartialOrd, Ord, MallocSizeOf,
 )]
-pub struct BatchDigest(pub [u8; DIGEST_LEN]);
+pub struct BatchDigest(pub [u8; crypto::DIGEST_LENGTH]);
 
 impl fmt::Debug for BatchDigest {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> Result<(), fmt::Error> {
@@ -50,25 +51,23 @@ impl fmt::Display for BatchDigest {
     }
 }
 
-impl From<BatchDigest> for Digest {
+impl From<BatchDigest> for Digest<{ crypto::DIGEST_LENGTH }> {
     fn from(digest: BatchDigest) -> Self {
         Digest::new(digest.0)
     }
 }
 
 impl BatchDigest {
-    pub fn new(val: [u8; DIGEST_LEN]) -> BatchDigest {
+    pub fn new(val: [u8; crypto::DIGEST_LENGTH]) -> BatchDigest {
         BatchDigest(val)
     }
 }
 
-impl Hash for Batch {
+impl Hash<{ crypto::DIGEST_LENGTH }> for Batch {
     type TypedDigest = BatchDigest;
 
     fn digest(&self) -> Self::TypedDigest {
-        BatchDigest::new(fastcrypto::blake2b_256(|hasher| {
-            self.0.iter().for_each(|tx| hasher.update(tx))
-        }))
+        BatchDigest::new(crypto::DefaultHashFunction::digest_iterator(self.0.iter()).into())
     }
 }
 
@@ -86,7 +85,7 @@ pub struct Header {
 }
 
 impl HeaderBuilder {
-    pub fn build<F>(self, signer: &F) -> Result<Header, fastcrypto::traits::Error>
+    pub fn build<F>(self, signer: &F) -> Result<Header, fastcrypto::error::FastCryptoError>
     where
         F: Signer<Signature>,
     {
@@ -102,7 +101,9 @@ impl HeaderBuilder {
 
         Ok(Header {
             id: h.digest(),
-            signature: signer.try_sign(Digest::from(h.digest()).as_ref())?,
+            signature: signer
+                .try_sign(Digest::from(h.digest()).as_ref())
+                .map_err(|_| fastcrypto::error::FastCryptoError::GeneralError)?,
             ..h
         })
     }
@@ -127,7 +128,7 @@ impl Header {
         epoch: Epoch,
         payload: IndexMap<BatchDigest, WorkerId>,
         parents: BTreeSet<CertificateDigest>,
-        signature_service: &mut SignatureService<Signature>,
+        signature_service: &mut SignatureService<Signature, { crypto::DIGEST_LENGTH }>,
     ) -> Self {
         let header = Self {
             author,
@@ -176,7 +177,7 @@ impl Header {
         }
 
         // Check the signature.
-        let id_digest: Digest = Digest::from(self.id);
+        let id_digest: Digest<{ crypto::DIGEST_LENGTH }> = Digest::from(self.id);
         self.author
             .verify(id_digest.as_ref(), &self.signature)
             .map_err(DagError::from)
@@ -186,9 +187,9 @@ impl Header {
 #[derive(
     Clone, Copy, Serialize, Deserialize, Default, PartialEq, Eq, Hash, PartialOrd, Ord, MallocSizeOf,
 )]
-pub struct HeaderDigest([u8; DIGEST_LEN]);
+pub struct HeaderDigest([u8; crypto::DIGEST_LENGTH]);
 
-impl From<HeaderDigest> for Digest {
+impl From<HeaderDigest> for Digest<{ crypto::DIGEST_LENGTH }> {
     fn from(hd: HeaderDigest) -> Self {
         Digest::new(hd.0)
     }
@@ -206,23 +207,22 @@ impl fmt::Display for HeaderDigest {
     }
 }
 
-impl Hash for Header {
+impl Hash<{ crypto::DIGEST_LENGTH }> for Header {
     type TypedDigest = HeaderDigest;
 
     fn digest(&self) -> HeaderDigest {
-        let hasher_update = |hasher: &mut VarBlake2b| {
-            hasher.update(&self.author);
-            hasher.update(self.round.to_le_bytes());
-            hasher.update(self.epoch.to_le_bytes());
-            for (x, y) in self.payload.iter() {
-                hasher.update(Digest::from(*x));
-                hasher.update(y.to_le_bytes());
-            }
-            for x in self.parents.iter() {
-                hasher.update(Digest::from(*x))
-            }
-        };
-        HeaderDigest(fastcrypto::blake2b_256(hasher_update))
+        let mut hasher = crypto::DefaultHashFunction::new();
+        hasher.update(&self.author);
+        hasher.update(&self.round.to_le_bytes());
+        hasher.update(self.epoch.to_le_bytes());
+        for (x, y) in self.payload.iter() {
+            hasher.update(Digest::from(*x));
+            hasher.update(y.to_le_bytes());
+        }
+        for x in self.parents.iter() {
+            hasher.update(Digest::from(*x))
+        }
+        HeaderDigest(hasher.finalize().into())
     }
 }
 
@@ -269,7 +269,7 @@ impl Vote {
     pub async fn new(
         header: &Header,
         author: &PublicKey,
-        signature_service: &mut SignatureService<Signature>,
+        signature_service: &mut SignatureService<Signature, { crypto::DIGEST_LENGTH }>,
     ) -> Self {
         let vote = Self {
             id: header.id,
@@ -298,7 +298,7 @@ impl Vote {
             signature: Signature::default(),
         };
 
-        let vote_digest: Digest = vote.digest().into();
+        let vote_digest: Digest<{ crypto::DIGEST_LENGTH }> = vote.digest().into();
         let signature = signer.sign(vote_digest.as_ref());
 
         Self { signature, ..vote }
@@ -321,16 +321,16 @@ impl Vote {
         );
 
         // Check the signature.
-        let vote_digest: Digest = self.digest().into();
+        let vote_digest: Digest<{ crypto::DIGEST_LENGTH }> = self.digest().into();
         self.author
             .verify(vote_digest.as_ref(), &self.signature)
             .map_err(DagError::from)
     }
 }
 #[derive(Clone, Serialize, Deserialize, Default, PartialEq, Eq, Hash, PartialOrd, Ord, Copy)]
-pub struct VoteDigest([u8; DIGEST_LEN]);
+pub struct VoteDigest([u8; crypto::DIGEST_LENGTH]);
 
-impl From<VoteDigest> for Digest {
+impl From<VoteDigest> for Digest<{ crypto::DIGEST_LENGTH }> {
     fn from(hd: VoteDigest) -> Self {
         Digest::new(hd.0)
     }
@@ -348,18 +348,16 @@ impl fmt::Display for VoteDigest {
     }
 }
 
-impl Hash for Vote {
+impl Hash<{ crypto::DIGEST_LENGTH }> for Vote {
     type TypedDigest = VoteDigest;
 
     fn digest(&self) -> VoteDigest {
-        let hasher_update = |hasher: &mut VarBlake2b| {
-            hasher.update(Digest::from(self.id));
-            hasher.update(self.round.to_le_bytes());
-            hasher.update(self.epoch.to_le_bytes());
-            hasher.update(&self.origin);
-        };
-
-        VoteDigest(fastcrypto::blake2b_256(hasher_update))
+        let mut hasher = crypto::DefaultHashFunction::default();
+        hasher.update(Digest::from(self.id));
+        hasher.update(&self.round.to_le_bytes());
+        hasher.update(&self.epoch.to_le_bytes());
+        hasher.update(&self.origin);
+        VoteDigest(hasher.finalize().into())
     }
 }
 
@@ -384,7 +382,7 @@ impl PartialEq for Vote {
 }
 
 #[serde_as]
-#[derive(Clone, MallocSizeOf, Serialize, Deserialize, Default)]
+#[derive(Clone, Serialize, Deserialize, MallocSizeOf, Default)]
 pub struct Certificate {
     pub header: Header,
     aggregated_signature: AggregateSignature,
@@ -473,8 +471,11 @@ impl Certificate {
         let aggregated_signature = if sigs.is_empty() {
             AggregateSignature::default()
         } else {
-            AggregateSignature::aggregate(sigs.into_iter().map(|(_, sig)| sig).collect())
-                .map_err(DagError::InvalidSignature)?
+            AggregateSignature::aggregate::<BLS12381Signature, Vec<&BLS12381Signature>>(
+                sigs.iter().map(|(_, sig)| sig).collect(),
+            )
+            .map_err(|_| signature::Error::new())
+            .map_err(DagError::InvalidSignature)?
         };
 
         Ok(Certificate {
@@ -539,7 +540,7 @@ impl Certificate {
         );
 
         // Verify the signatures
-        let certificate_digest: Digest = Digest::from(self.digest());
+        let certificate_digest: Digest<{ crypto::DIGEST_LENGTH }> = Digest::from(self.digest());
         self.aggregated_signature
             .verify(&pks[..], certificate_digest.as_ref())
             .map_err(|_| signature::Error::new())
@@ -564,10 +565,10 @@ impl Certificate {
 #[derive(
     Clone, Copy, Serialize, Deserialize, Default, MallocSizeOf, PartialEq, Eq, Hash, PartialOrd, Ord,
 )]
-pub struct CertificateDigest([u8; DIGEST_LEN]);
+pub struct CertificateDigest([u8; crypto::DIGEST_LENGTH]);
 
 impl CertificateDigest {
-    pub fn new(digest: [u8; DIGEST_LEN]) -> CertificateDigest {
+    pub fn new(digest: [u8; crypto::DIGEST_LENGTH]) -> CertificateDigest {
         CertificateDigest(digest)
     }
 }
@@ -578,7 +579,7 @@ impl AsRef<[u8]> for CertificateDigest {
     }
 }
 
-impl From<CertificateDigest> for Digest {
+impl From<CertificateDigest> for Digest<{ crypto::DIGEST_LENGTH }> {
     fn from(hd: CertificateDigest) -> Self {
         Digest::new(hd.0)
     }
@@ -603,18 +604,16 @@ impl fmt::Display for CertificateDigest {
     }
 }
 
-impl Hash for Certificate {
+impl Hash<{ crypto::DIGEST_LENGTH }> for Certificate {
     type TypedDigest = CertificateDigest;
 
     fn digest(&self) -> CertificateDigest {
-        let hasher_update = |hasher: &mut VarBlake2b| {
-            hasher.update(Digest::from(self.header.id));
-            hasher.update(self.round().to_le_bytes());
-            hasher.update(self.epoch().to_le_bytes());
-            hasher.update(&self.origin());
-        };
-
-        CertificateDigest(fastcrypto::blake2b_256(hasher_update))
+        let mut hasher = crypto::DefaultHashFunction::new();
+        hasher.update(Digest::from(self.header.id));
+        hasher.update(self.round().to_le_bytes());
+        hasher.update(self.epoch().to_le_bytes());
+        hasher.update(&self.origin());
+        CertificateDigest(hasher.finalize().into())
     }
 }
 
@@ -643,7 +642,7 @@ impl PartialEq for Certificate {
 }
 
 impl Affiliated for Certificate {
-    fn parents(&self) -> Vec<<Self as Hash>::TypedDigest> {
+    fn parents(&self) -> Vec<<Self as Hash<{ crypto::DIGEST_LENGTH }>>::TypedDigest> {
         self.header.parents.iter().cloned().collect()
     }
 
@@ -671,23 +670,6 @@ pub enum PrimaryMessage {
         from: PublicKey,
     },
 
-    CertificatesRangeRequest {
-        // Requests certificate digests with rounds >= `range_start` to be sent back.
-        // No upper range limit is specified, because the requestor does not know the
-        // current upper limit. The response size should still be acceptable if all
-        // certificate digests from an authority are returned: e.g. a response can be
-        // 32B / digest * 200 authorities * 50 rounds ~ 320KB
-        range_start: Round,
-        // Maximum number of rounds that should be contained in each reply.
-        max_rounds: u64,
-        requestor: PublicKey,
-    },
-    CertificatesRangeResponse {
-        // Certificate digests, grouped by round numbers.
-        certificate_ids: BTreeMap<Round, Vec<CertificateDigest>>,
-        from: PublicKey,
-    },
-
     PayloadAvailabilityRequest {
         certificate_ids: Vec<CertificateDigest>,
         requestor: PublicKey,
@@ -697,6 +679,26 @@ pub enum PrimaryMessage {
         payload_availability: Vec<(CertificateDigest, bool)>,
         from: PublicKey,
     },
+}
+
+/// Used by the primary to fetch certificates from other primaries.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FetchCertificatesRequest {
+    /// The exclusive round number lower bounds to fetch certificates for each authority.
+    /// This corresponds to the highest round processed by each authority at the requestor.
+    ///
+    /// Currently requestor always includes all authorities in this this vector, but a subset should work too.
+    /// Authorities not in this vector do not get their certificates fetched.
+    pub exclusive_lower_bounds: Vec<(PublicKey, Round)>,
+    /// Maximum number of certificates that should be returned.
+    pub max_items: usize,
+}
+
+/// Used by the primary to reply to FetchCertificatesRequest.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct FetchCertificatesResponse {
+    /// Certifcates sorted from lower to higher rounds.
+    pub certificates: Vec<Certificate>,
 }
 
 /// Message to reconfigure worker tasks. This message must be sent by a trusted source.
@@ -710,18 +712,10 @@ pub enum ReconfigureNotification {
     Shutdown,
 }
 
-/// The messages sent by the primary to its workers.
-#[allow(clippy::large_enum_variant)]
+/// Used by the primary to reconfigure the worker.
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub enum PrimaryWorkerMessage {
-    /// The primary indicates a round update.
-    Cleanup(Round),
-    /// Reconfigure the worker.
-    Reconfigure(ReconfigureNotification),
-    /// The primary requests a batch from the worker
-    RequestBatch(BatchDigest),
-    /// Delete the batches, dictated from the provided vector of digest, from the worker node
-    DeleteBatches(Vec<BatchDigest>),
+pub struct WorkerReconfigureMessage {
+    pub message: ReconfigureNotification,
 }
 
 /// Used by the primary to request that the worker sync the target missing batches.
@@ -731,27 +725,17 @@ pub struct WorkerSynchronizeMessage {
     pub target: PublicKey,
 }
 
+/// Used by the primary to request that the worker delete the specified batches.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct WorkerDeleteBatchesMessage {
+    pub digests: Vec<BatchDigest>,
+}
+
 #[derive(Clone, Default, Debug, Eq, PartialEq)]
 pub struct BatchMessage {
     // TODO: revisit including the id here [see #188]
-    pub id: BatchDigest,
-    pub transactions: Batch,
-}
-
-pub type BlockRemoverResult<T> = Result<T, BlockRemoverError>;
-
-#[derive(Clone, Debug)]
-pub struct BlockRemoverError {
-    pub ids: Vec<CertificateDigest>,
-    pub error: BlockRemoverErrorKind,
-}
-
-// TODO: refactor BlockError & BlockRemoverError to be one type shared by get/remove collections.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum BlockRemoverErrorKind {
-    Timeout,
-    Failed,
-    StorageFailure,
+    pub digest: BatchDigest,
+    pub batch: Batch,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -765,7 +749,7 @@ pub type BlockResult<T> = Result<T, BlockError>;
 
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct BlockError {
-    pub id: CertificateDigest,
+    pub digest: CertificateDigest,
     pub error: BlockErrorKind,
 }
 
@@ -777,7 +761,11 @@ impl<T> From<BlockError> for BlockResult<T> {
 
 impl fmt::Display for BlockError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "block id: {}, error type: {}", self.id, self.error)
+        write!(
+            f,
+            "block digest: {}, error type: {}",
+            self.digest, self.error
+        )
     }
 }
 
@@ -790,28 +778,22 @@ impl fmt::Display for BlockErrorKind {
 /// The messages sent by the workers to their primary.
 #[derive(Clone, Debug, Serialize, Deserialize, Eq, PartialEq)]
 pub enum WorkerPrimaryMessage {
-    /// The worker indicates it sealed a new batch.
-    OurBatch(BatchDigest, WorkerId),
-    /// The worker indicates it received a batch's digest from another authority.
-    OthersBatch(BatchDigest, WorkerId),
-    /// The worker sends a requested batch
-    RequestedBatch(BatchDigest, Batch),
-    /// When batches are successfully deleted, this message is sent dictating the
-    /// batches that have been deleted from the worker.
-    DeletedBatches(Vec<BatchDigest>),
-    /// An error has been returned by worker
-    Error(WorkerPrimaryError),
     /// Reconfiguration message sent by the executor (usually upon epoch change).
     Reconfigure(ReconfigureNotification),
 }
 
-#[derive(Debug, Serialize, Deserialize, thiserror::Error, Clone, Eq, PartialEq)]
-pub enum WorkerPrimaryError {
-    #[error("Batch with id {0} has not been found")]
-    RequestedBatchNotFound(BatchDigest),
+/// Used by worker to inform primary it sealed a new batch.
+#[derive(Clone, Serialize, Deserialize, Eq, PartialEq, Debug)]
+pub struct WorkerOurBatchMessage {
+    pub digest: BatchDigest,
+    pub worker_id: WorkerId,
+}
 
-    #[error("An error occurred while deleting batches. None deleted")]
-    ErrorWhileDeletingBatches(Vec<BatchDigest>),
+/// Used by worker to inform primary it received a batch from another authority.
+#[derive(Clone, Serialize, Deserialize, Eq, PartialEq, Debug)]
+pub struct WorkerOthersBatchMessage {
+    pub digest: BatchDigest,
+    pub worker_id: WorkerId,
 }
 
 #[derive(Clone, Serialize, Deserialize, Eq, PartialEq, Debug)]

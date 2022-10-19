@@ -1,23 +1,15 @@
-// Copyright (c) 2022, Mysten Labs, Inc.
+// Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-use std::collections::{BTreeMap, HashSet};
+use crate::authority::AuthorityState;
+use signature::Signer;
+use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::Duration;
 
-use crate::{
-    authority::AuthorityState,
-    authority_aggregator::{AuthAggMetrics, AuthorityAggregator},
-    authority_client::{NetworkAuthorityClient, NetworkAuthorityClientMetrics},
-    epoch::epoch_store::EpochStore,
-    safe_client::SafeClientMetrics,
-};
-
-use sui_config::{NetworkConfig, ValidatorInfo};
 use sui_types::{
     base_types::{dbg_addr, ObjectID, TransactionDigest},
     batch::UpdateItem,
-    committee::Committee,
     crypto::{get_key_pair, AccountKeyPair, Signature},
     messages::{BatchInfoRequest, BatchInfoResponseItem, Transaction, TransactionData},
     object::Object,
@@ -26,39 +18,6 @@ use sui_types::{
 use futures::StreamExt;
 use tokio::time::sleep;
 use tracing::info;
-
-/// Create a test authority aggregator.
-/// (duplicated from test-utils/src/authority.rs - that function can't be used
-/// in sui-core because of type name conflicts (sui_core::safe_client::SafeClient vs
-/// safe_client::SafeClient).
-pub fn test_authority_aggregator(
-    config: &NetworkConfig,
-) -> AuthorityAggregator<NetworkAuthorityClient> {
-    let validators_info = config.validator_set();
-    let committee = Committee::new(0, ValidatorInfo::voting_rights(validators_info)).unwrap();
-    let epoch_store = Arc::new(EpochStore::new_for_testing(&committee));
-    let clients: BTreeMap<_, _> = validators_info
-        .iter()
-        .map(|config| {
-            (
-                config.protocol_key(),
-                NetworkAuthorityClient::connect_lazy(
-                    config.network_address(),
-                    Arc::new(NetworkAuthorityClientMetrics::new_for_tests()),
-                )
-                .unwrap(),
-            )
-        })
-        .collect();
-    let registry = prometheus::Registry::new();
-    AuthorityAggregator::new(
-        committee,
-        epoch_store,
-        clients,
-        AuthAggMetrics::new(&registry),
-        SafeClientMetrics::new(&registry),
-    )
-}
 
 pub async fn wait_for_tx(wait_digest: TransactionDigest, state: Arc<AuthorityState>) {
     wait_for_all_txes(vec![wait_digest], state).await
@@ -81,6 +40,7 @@ pub async fn wait_for_all_txes(wait_digests: Vec<TransactionDigest>, state: Arc<
             .unwrap(),
     );
 
+    // TODO: duplicated code with transaction.rs
     loop {
         tokio::select! {
             _ = &mut timeout => panic!("wait_for_tx timed out"),
@@ -138,6 +98,15 @@ pub fn create_fake_transaction() -> Transaction {
         object.compute_object_reference(),
         10000,
     );
-    let signature = Signature::new(&data, &sender_key);
+    to_sender_signed_transaction(data, &sender_key)
+}
+
+// This is used to sign transaction with signer using default Intent.
+pub fn to_sender_signed_transaction(
+    data: TransactionData,
+    signer: &dyn Signer<Signature>,
+) -> Transaction {
+    let signature = Signature::new_temp(&data.to_bytes(), signer);
+    // let signature = Signature::new_secure(&data, Intent::default(), signer).unwrap();
     Transaction::new(data, signature)
 }

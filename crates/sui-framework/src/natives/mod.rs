@@ -1,4 +1,4 @@
-// Copyright (c) 2022, Mysten Labs, Inc.
+// Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
 mod crypto;
@@ -6,7 +6,6 @@ mod event;
 mod object;
 pub mod object_runtime;
 mod test_scenario;
-mod test_scenario_wip;
 mod transfer;
 mod tx_context;
 mod types;
@@ -27,33 +26,33 @@ pub fn all_natives(
     sui_framework_addr: AccountAddress,
 ) -> NativeFunctionTable {
     let sui_natives: &[(&str, &str, NativeFunction)] = &[
-        ("crypto", "ecrecover", make_native!(crypto::ecrecover)),
+        ("ecdsa", "ecrecover", make_native!(crypto::ecrecover)),
         (
-            "crypto",
+            "ecdsa",
             "decompress_pubkey",
             make_native!(crypto::decompress_pubkey),
         ),
-        ("crypto", "keccak256", make_native!(crypto::keccak256)),
+        ("ecdsa", "keccak256", make_native!(crypto::keccak256)),
         (
-            "crypto",
+            "ecdsa",
             "secp256k1_verify",
             make_native!(crypto::secp256k1_verify),
         ),
         (
-            "crypto",
+            "bls12381",
             "bls12381_verify_g1_sig",
             make_native!(crypto::bls12381_verify_g1_sig),
         ),
         ("event", "emit", make_native!(event::emit)),
         (
             "object",
-            "bytes_to_address",
-            make_native!(object::bytes_to_address),
+            "address_from_bytes",
+            make_native!(object::address_from_bytes),
         ),
         ("object", "delete_impl", make_native!(object::delete_impl)),
         ("object", "borrow_uid", make_native!(object::borrow_uid)),
         (
-            "crypto",
+            "bulletproofs",
             "native_verify_full_range_proof",
             make_native!(crypto::verify_range_proof),
         ),
@@ -83,44 +82,64 @@ pub fn all_natives(
             make_native!(crypto::scalar_from_bytes),
         ),
         (
-            "crypto",
+            "ed25519",
             "ed25519_verify",
             make_native!(crypto::ed25519_verify),
         ),
         (
             "test_scenario",
-            "drop_object_for_testing",
-            make_native!(test_scenario::drop_object_for_testing),
+            "take_from_address_by_id",
+            make_native!(test_scenario::take_from_address_by_id),
         ),
         (
             "test_scenario",
-            "emit_wrapped_object_events",
-            make_native!(test_scenario::emit_wrapped_object_events),
+            "most_recent_id_for_address",
+            make_native!(test_scenario::most_recent_id_for_address),
         ),
         (
             "test_scenario",
-            "get_account_owned_inventory",
-            make_native!(test_scenario::get_account_owned_inventory),
+            "was_taken_from_address",
+            make_native!(test_scenario::was_taken_from_address),
         ),
         (
             "test_scenario",
-            "get_object_owned_inventory",
-            make_native!(test_scenario::get_object_owned_inventory),
+            "take_immutable_by_id",
+            make_native!(test_scenario::take_immutable_by_id),
         ),
         (
             "test_scenario",
-            "get_unowned_inventory",
-            make_native!(test_scenario::get_unowned_inventory),
+            "most_recent_immutable_id",
+            make_native!(test_scenario::most_recent_immutable_id),
         ),
         (
             "test_scenario",
-            "num_events",
-            make_native!(test_scenario::num_events),
+            "was_taken_immutable",
+            make_native!(test_scenario::was_taken_immutable),
         ),
         (
             "test_scenario",
-            "update_object",
-            make_native!(test_scenario::update_object),
+            "take_shared_by_id",
+            make_native!(test_scenario::take_shared_by_id),
+        ),
+        (
+            "test_scenario",
+            "most_recent_id_shared",
+            make_native!(test_scenario::most_recent_id_shared),
+        ),
+        (
+            "test_scenario",
+            "was_taken_shared",
+            make_native!(test_scenario::was_taken_shared),
+        ),
+        (
+            "test_scenario",
+            "end_transaction",
+            make_native!(test_scenario::end_transaction),
+        ),
+        (
+            "test_scenario",
+            "ids_for_address",
+            make_native!(test_scenario::ids_for_address),
         ),
         (
             "transfer",

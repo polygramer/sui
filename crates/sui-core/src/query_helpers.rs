@@ -1,4 +1,4 @@
-// Copyright (c) 2022, Mysten Labs, Inc.
+// Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::authority::SuiDataStore;
@@ -9,12 +9,13 @@ use sui_types::messages::{CertifiedTransaction, TransactionEffects};
 use sui_types::{base_types::*, batch::TxSequenceNumber, error::SuiError, fp_ensure};
 use tracing::debug;
 
-const MAX_TX_RANGE_SIZE: u64 = 4096;
+pub const MAX_TX_RANGE_SIZE: u64 = 4096;
 
 pub struct QueryHelpers<S> {
     _s: std::marker::PhantomData<S>,
 }
 
+// TODO: [gateway-deprecation]
 // TODO: QueryHelpers contains query implementations for the Gateway read API that would otherwise
 // be duplicated between AuthorityState and GatewayState. The gateway read API will be removed
 // soon, since nodes will be handling that. At that point we should delete this struct and move the

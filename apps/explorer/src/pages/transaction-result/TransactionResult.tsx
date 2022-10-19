@@ -1,4 +1,4 @@
-// Copyright (c) 2022, Mysten Labs, Inc.
+// Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
 import {
@@ -111,7 +111,7 @@ const transformTransactionResponse = (
     return {
         ...txObj.certificate,
         status: getExecutionStatusType(txObj)!,
-        gasFee: getTotalGasUsed(txObj),
+        gasFee: getTotalGasUsed(txObj)!,
         txError: getExecutionStatusError(txObj) ?? '',
         txId: id,
         loadState: 'loaded',

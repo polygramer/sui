@@ -1,5 +1,5 @@
 // Copyright (c) 2021, Facebook, Inc. and its affiliates
-// Copyright (c) 2022, Mysten Labs, Inc.
+// Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 #![warn(
     future_incompatible,
@@ -17,7 +17,6 @@ mod core;
 mod grpc_server;
 mod header_waiter;
 mod helper;
-mod payload_receiver;
 mod primary;
 mod proposer;
 mod state_handler;
@@ -34,14 +33,14 @@ mod metrics;
 mod certificate_tests;
 
 pub use crate::{
-    block_remover::{BlockRemover, BlockRemoverCommand, DeleteBatchMessage},
+    block_remover::BlockRemover,
     block_synchronizer::{
         mock::MockBlockSynchronizer,
         responses::{CertificatesResponse, PayloadAvailabilityResponse},
         BlockHeader,
     },
-    block_waiter::{BlockCommand, BlockWaiter, GetBlockResponse},
+    block_waiter::{BlockWaiter, GetBlockResponse},
     grpc_server::metrics::EndpointMetrics,
     metrics::PrimaryChannelMetrics,
-    primary::{NetworkModel, PayloadToken, Primary, PrimaryWorkerMessage, CHANNEL_CAPACITY},
+    primary::{NetworkModel, PayloadToken, Primary, CHANNEL_CAPACITY},
 };

@@ -1,9 +1,10 @@
-// Copyright (c) 2022, Mysten Labs, Inc.
+// Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::{
     genesis,
     genesis_config::{GenesisConfig, ValidatorGenesisInfo},
+    p2p::P2pConfig,
     utils, ConsensusConfig, NetworkConfig, NodeConfig, ValidatorInfo, AUTHORITIES_DB_NAME,
     CONSENSUS_DB_NAME,
 };
@@ -93,7 +94,7 @@ impl<R> ConfigBuilder<R> {
         self
     }
 
-    pub fn rng<N: ::rand::RngCore + ::rand::CryptoRng>(self, rng: N) -> ConfigBuilder<N> {
+    pub fn rng<N: rand::RngCore + rand::CryptoRng>(self, rng: N) -> ConfigBuilder<N> {
         ConfigBuilder {
             rng: Some(rng),
             config_directory: self.config_directory,
@@ -106,7 +107,7 @@ impl<R> ConfigBuilder<R> {
     }
 }
 
-impl<R: ::rand::RngCore + ::rand::CryptoRng> ConfigBuilder<R> {
+impl<R: rand::RngCore + rand::CryptoRng> ConfigBuilder<R> {
     //TODO right now we always randomize ports, we may want to have a default port configuration
     pub fn build(mut self) -> NetworkConfig {
         let committee = self.committee.take().unwrap();
@@ -258,8 +259,13 @@ impl<R: ::rand::RngCore + ::rand::CryptoRng> ConfigBuilder<R> {
                 let consensus_config = ConsensusConfig {
                     consensus_address,
                     consensus_db_path,
-                    delay_step: Some(15_000),
+                    timeout_secs: Some(60),
                     narwhal_config: Default::default(),
+                };
+
+                let p2p_config = P2pConfig {
+                    listen_address: utils::available_local_socket_address(),
+                    ..Default::default()
                 };
 
                 NodeConfig {
@@ -281,6 +287,7 @@ impl<R: ::rand::RngCore + ::rand::CryptoRng> ConfigBuilder<R> {
                     genesis: crate::node::Genesis::new(genesis.clone()),
                     grpc_load_shed: initial_accounts_config.grpc_load_shed,
                     grpc_concurrency_limit: initial_accounts_config.grpc_concurrency_limit,
+                    p2p_config,
                 }
             })
             .collect();

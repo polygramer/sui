@@ -1,7 +1,7 @@
 {
     "name": "sui-wallet",
     "private": true,
-    "version": "0.1.1",
+    "version": "0.2.0",
     "description": "A wallet for Sui",
     "main": "./dist/ui.js",
     "scripts": {
@@ -39,9 +39,11 @@
         "@types/node": "^18.0.6",
         "@types/react": "^18.0.20",
         "@types/react-dom": "^18.0.6",
+        "@types/semver": "^7.3.12",
         "@types/uuid": "^8.3.4",
         "@types/webextension-polyfill": "^0.9.0",
         "@types/webpack": "^5.28.0",
+        "@types/zxcvbn": "^4.4.1",
         "@typescript-eslint/eslint-plugin": "^5.38.1",
         "@typescript-eslint/parser": "^5.38.1",
         "concurrently": "^7.3.0",
@@ -79,9 +81,11 @@
         "webpack-merge": "^5.8.0"
     },
     "dependencies": {
+        "@floating-ui/react-dom-interactions": "^0.10.1",
+        "@growthbook/growthbook": "^0.18.1",
         "@metamask/browser-passworder": "^3.0.0",
         "@mysten/sui.js": "workspace:*",
-        "@popperjs/core": "^2.11.6",
+        "@mysten/wallet-standard": "workspace:*",
         "@reduxjs/toolkit": "^1.8.3",
         "@scure/bip32": "^1.1.0",
         "@scure/bip39": "^1.1.0",
@@ -90,19 +94,22 @@
         "classnames": "^2.3.1",
         "eslint-plugin-react": "^7.31.8",
         "formik": "^2.2.9",
+        "framer-motion": "^7.5.1",
+        "mitt": "^3.0.0",
         "react": "^18.2.0",
         "react-dom": "^18.2.0",
         "react-intl": "^6.0.5",
         "react-number-format": "^4.9.3",
-        "react-popper": "^2.3.0",
         "react-redux": "^8.0.2",
         "react-router-dom": "^6.3.0",
         "react-textarea-autosize": "^8.3.4",
         "rxjs": "^7.5.6",
+        "semver": "^7.3.8",
         "stream-browserify": "^3.0.0",
         "tweetnacl": "^1.0.3",
         "uuid": "^8.3.2",
         "webextension-polyfill": "^0.9.0",
-        "yup": "^0.32.11"
+        "yup": "^0.32.11",
+        "zxcvbn": "^4.4.2"
     }
 }

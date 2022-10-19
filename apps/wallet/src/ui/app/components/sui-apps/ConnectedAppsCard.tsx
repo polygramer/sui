@@ -1,4 +1,4 @@
-// Copyright (c) 2022, Mysten Labs, Inc.
+// Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
 import cl from 'classnames';
@@ -39,6 +39,7 @@ function ConnectedDapps() {
                         name: name,
                         icon: appData?.favIcon,
                         link: appData.origin,
+                        pagelink: appData.pagelink,
                         linkLabel: appData.origin.replace('https://', ''),
                         description: '',
                         id: appData.id,

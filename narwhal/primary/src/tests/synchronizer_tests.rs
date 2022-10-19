@@ -1,8 +1,8 @@
-// Copyright (c) 2022, Mysten Labs, Inc.
+// Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 use crate::{common::create_db_stores, synchronizer::Synchronizer};
 use consensus::{dag::Dag, metrics::ConsensusMetrics};
-use fastcrypto::{traits::KeyPair, Hash};
+use fastcrypto::{hash::Hash, traits::KeyPair};
 use prometheus::Registry;
 use std::{collections::BTreeSet, sync::Arc};
 use test_utils::{make_optimal_signed_certificates, CommitteeFixture};

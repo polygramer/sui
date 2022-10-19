@@ -1,11 +1,15 @@
-// Copyright (c) 2022, Mysten Labs, Inc.
+// Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+use anemo_tower::callback::CallbackLayer;
+use anemo_tower::trace::TraceLayer;
 use anyhow::anyhow;
 use anyhow::bail;
 use anyhow::Result;
 use futures::TryFutureExt;
 use mysten_network::server::ServerBuilder;
+use narwhal_network::metrics::MetricsMakeCallbackHandler;
+use narwhal_network::metrics::{NetworkConnectionMetrics, NetworkMetrics};
 use parking_lot::Mutex;
 use prometheus::Registry;
 use std::option::Option::None;
@@ -29,7 +33,9 @@ use sui_core::{
 };
 use sui_json_rpc::bcs_api::BcsApiImpl;
 use sui_json_rpc::streaming_api::TransactionStreamingApiImpl;
+use sui_json_rpc::transaction_builder_api::FullNodeTransactionBuilderApi;
 use sui_network::api::ValidatorServer;
+use sui_network::default_mysten_network_config;
 use sui_storage::{
     event_store::{EventStoreType, SqlEventStore},
     node_sync_store::NodeSyncStore,
@@ -37,11 +43,12 @@ use sui_storage::{
 };
 use sui_types::messages::{CertifiedTransaction, CertifiedTransactionEffects};
 use tokio::sync::mpsc::channel;
+use tower::ServiceBuilder;
 use tracing::{error, info, warn};
 
 use crate::metrics::GrpcMetrics;
 use sui_core::authority_client::NetworkAuthorityClientMetrics;
-use sui_core::epoch::epoch_store::EpochStore;
+use sui_core::epoch::committee_store::CommitteeStore;
 use sui_json_rpc::event_api::EventReadApiImpl;
 use sui_json_rpc::event_api::EventStreamingApiImpl;
 use sui_json_rpc::http_server::HttpServerHandle;
@@ -54,6 +61,9 @@ use sui_types::crypto::KeypairTraits;
 
 pub mod admin;
 pub mod metrics;
+
+mod handle;
+pub use handle::SuiNodeHandle;
 
 pub struct SuiNode {
     grpc_server: tokio::task::JoinHandle<Result<()>>,
@@ -68,6 +78,11 @@ pub struct SuiNode {
     active: Arc<ActiveAuthority<NetworkAuthorityClient>>,
     transaction_orchestrator: Option<Arc<TransactiondOrchestrator<NetworkAuthorityClient>>>,
     _prometheus_registry: Registry,
+
+    _p2p_network: anemo::Network,
+
+    #[cfg(msim)]
+    sim_node: sui_simulator::runtime::NodeHandle,
 }
 
 impl SuiNode {
@@ -85,7 +100,7 @@ impl SuiNode {
         let secret = Arc::pin(config.protocol_key_pair().copy());
         let committee = genesis.committee()?;
         let store = Arc::new(AuthorityStore::open(&config.db_path().join("store"), None));
-        let epoch_store = Arc::new(EpochStore::new(
+        let committee_store = Arc::new(CommitteeStore::new(
             config.db_path().join("epochs"),
             &committee,
             None,
@@ -94,9 +109,10 @@ impl SuiNode {
         let checkpoint_store = Arc::new(Mutex::new(CheckpointStore::open(
             &config.db_path().join("checkpoints"),
             None,
-            committee.epoch,
+            &committee,
             config.protocol_public_key(),
             secret.clone(),
+            config.enable_reconfig,
         )?));
 
         let index_store = if is_validator {
@@ -124,12 +140,19 @@ impl SuiNode {
             .websocket_address
             .map(|_| Arc::new(TransactionStreamer::new()));
 
+        let node_sync_store = Arc::new(NodeSyncStore::open_tables_read_write(
+            config.db_path().join("node_sync_db"),
+            None,
+            None,
+        ));
+
         let state = Arc::new(
             AuthorityState::new(
                 config.protocol_public_key(),
                 secret,
                 store,
-                epoch_store.clone(),
+                node_sync_store,
+                committee_store.clone(),
                 index_store.clone(),
                 event_store,
                 transaction_streamer,
@@ -140,11 +163,7 @@ impl SuiNode {
             )
             .await,
         );
-
-        let mut net_config = mysten_network::config::Config::new();
-        net_config.connect_timeout = Some(Duration::from_secs(5));
-        net_config.request_timeout = Some(Duration::from_secs(5));
-        net_config.http2_keepalive_interval = Some(Duration::from_secs(5));
+        let net_config = default_mysten_network_config();
 
         let sui_system_state = state.get_sui_system_state_object().await?;
 
@@ -165,20 +184,15 @@ impl SuiNode {
         }?;
         let net = AuthorityAggregator::new(
             state.clone_committee(),
-            epoch_store,
+            committee_store,
             authority_clients,
             AuthAggMetrics::new(&prometheus_registry),
-            SafeClientMetrics::new(&prometheus_registry),
+            Arc::new(SafeClientMetrics::new(&prometheus_registry)),
+            network_metrics.clone(),
         );
 
-        let node_sync_store = Arc::new(NodeSyncStore::open_tables_read_write(
-            config.db_path().join("node_sync_db"),
-            None,
-            None,
-        ));
         let active_authority = Arc::new(ActiveAuthority::new(
             state.clone(),
-            node_sync_store,
             net.clone(),
             GossipMetrics::new(&prometheus_registry),
             network_metrics.clone(),
@@ -249,10 +263,7 @@ impl SuiNode {
             Some(
                 active_authority
                     .clone()
-                    .spawn_checkpoint_process(
-                        CheckpointMetrics::new(&prometheus_registry),
-                        config.enable_reconfig,
-                    )
+                    .spawn_checkpoint_process(CheckpointMetrics::new(&prometheus_registry))
                     .await,
             )
         } else {
@@ -290,6 +301,47 @@ impl SuiNode {
             tokio::spawn(server.serve().map_err(Into::into))
         };
 
+        let p2p_network = {
+            let inbound_network_metrics =
+                NetworkMetrics::new("sui", "inbound", &prometheus_registry);
+            let outbound_network_metrics =
+                NetworkMetrics::new("sui", "outbound", &prometheus_registry);
+            let network_connection_metrics =
+                NetworkConnectionMetrics::new("sui", &prometheus_registry);
+
+            let routes = anemo::Router::new();
+
+            let service = ServiceBuilder::new()
+                .layer(TraceLayer::new_for_server_errors())
+                .layer(CallbackLayer::new(MetricsMakeCallbackHandler::new(
+                    Arc::new(inbound_network_metrics),
+                )))
+                .service(routes);
+
+            let outbound_layer = ServiceBuilder::new()
+                .layer(TraceLayer::new_for_client_and_server_errors())
+                .layer(CallbackLayer::new(MetricsMakeCallbackHandler::new(
+                    Arc::new(outbound_network_metrics),
+                )))
+                .into_inner();
+
+            let network = anemo::Network::bind(config.p2p_config.listen_address)
+                .server_name("sui")
+                .private_key(config.network_key_pair.copy().private().0.to_bytes())
+                .config(config.p2p_config.anemo_config.clone().unwrap_or_default())
+                .outbound_request_layer(outbound_layer)
+                .start(service)?;
+            info!("P2p network started on {}", network.local_addr());
+
+            let _connection_monitor_handle =
+                narwhal_network::connectivity::ConnectionMonitor::spawn(
+                    network.downgrade(),
+                    network_connection_metrics,
+                );
+
+            network
+        };
+
         let (json_rpc_service, ws_subscription_service) = build_http_servers(
             state.clone(),
             &transaction_orchestrator.clone(),
@@ -311,6 +363,10 @@ impl SuiNode {
             active: active_authority,
             transaction_orchestrator,
             _prometheus_registry: prometheus_registry,
+            _p2p_network: p2p_network,
+
+            #[cfg(msim)]
+            sim_node: sui_simulator::runtime::NodeHandle::current(),
         };
 
         info!("SuiNode started!");
@@ -373,6 +429,7 @@ pub async fn build_http_servers(
     server.register_module(ReadApi::new(state.clone()))?;
     server.register_module(FullNodeApi::new(state.clone()))?;
     server.register_module(BcsApiImpl::new(state.clone()))?;
+    server.register_module(FullNodeTransactionBuilderApi::new(state.clone()))?;
 
     if let Some(transaction_orchestrator) = transaction_orchestrator {
         server.register_module(FullNodeTransactionExecutionApi::new(

@@ -1,12 +1,12 @@
 // Copyright (c) 2021, Facebook, Inc. and its affiliates
-// Copyright (c) 2022, Mysten Labs, Inc.
+// Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 use crate::{
     consensus::{ConsensusProtocol, ConsensusState, Dag},
     utils, ConsensusOutput, SequenceNumber,
 };
 use config::{Committee, Stake};
-use fastcrypto::{traits::EncodeDecodeBase64, Hash};
+use fastcrypto::{hash::Hash, traits::EncodeDecodeBase64};
 use std::{collections::HashMap, sync::Arc};
 use tracing::debug;
 use types::{Certificate, CertificateDigest, ConsensusStore, Round, StoreResult};

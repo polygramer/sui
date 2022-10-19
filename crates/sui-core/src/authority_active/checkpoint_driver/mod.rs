@@ -1,4 +1,4 @@
-// Copyright (c) 2022, Mysten Labs, Inc.
+// Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
 use std::ops::Deref;
@@ -156,7 +156,6 @@ pub async fn checkpoint_process<A>(
     active_authority: Arc<ActiveAuthority<A>>,
     timing: &CheckpointProcessControl,
     metrics: CheckpointMetrics,
-    enable_reconfig: bool,
 ) where
     A: AuthorityAPI + Send + Sync + 'static + Clone + Reconfigurable,
 {
@@ -188,22 +187,17 @@ pub async fn checkpoint_process<A>(
                             .checkpoint_sequence_number
                             .set((next_cp_seq - 1) as i64);
                         last_cert_time = Instant::now();
-                        if enable_reconfig {
-                            if state_checkpoints.lock().is_ready_to_start_epoch_change() {
-                                while let Err(err) = active_authority.start_epoch_change().await {
-                                    error!(?next_cp_seq, "Failed to start epoch change: {:?}", err);
-                                    tokio::time::sleep(timing.epoch_change_retry_delay).await;
-                                }
-                                // No delay to minimize the reconfiguration latency.
-                                continue;
-                            } else if state_checkpoints.lock().is_ready_to_finish_epoch_change() {
-                                while let Err(err) = active_authority.finish_epoch_change().await {
-                                    error!(
-                                        ?next_cp_seq,
-                                        "Failed to finish epoch change: {:?}", err
-                                    );
-                                    tokio::time::sleep(timing.epoch_change_retry_delay).await;
-                                }
+                        if state_checkpoints.lock().is_ready_to_start_epoch_change() {
+                            while let Err(err) = active_authority.start_epoch_change().await {
+                                error!(?next_cp_seq, "Failed to start epoch change: {:?}", err);
+                                tokio::time::sleep(timing.epoch_change_retry_delay).await;
+                            }
+                            // No delay to minimize the reconfiguration latency.
+                            continue;
+                        } else if state_checkpoints.lock().is_ready_to_finish_epoch_change() {
+                            while let Err(err) = active_authority.finish_epoch_change().await {
+                                error!(?next_cp_seq, "Failed to finish epoch change: {:?}", err);
+                                tokio::time::sleep(timing.epoch_change_retry_delay).await;
                             }
                         }
                         tokio::time::sleep(timing.long_pause_between_checkpoints).await;
@@ -405,6 +399,28 @@ where
         return Err(SuiError::CheckpointingError { error });
     }
 
+    let enable_reconfig = active_authority.state.checkpoints.lock().enable_reconfig;
+    let next_epoch_committee = if enable_reconfig {
+        // Ready to start epoch change means that we have finalized the last second checkpoint,
+        // and now we are about to finalize the last checkpoint of the epoch.
+        let is_last_checkpoint = active_authority
+            .state
+            .checkpoints
+            .lock()
+            .is_ready_to_start_epoch_change();
+
+        if is_last_checkpoint {
+            // If this is the last checkpoint we are about to sign, we read the committee
+            // information for the next epoch and put it into the last checkpoint.
+            let sui_system_state = active_authority.state.get_sui_system_state_object().await?;
+            Some(sui_system_state.get_next_epoch_committee())
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
     active_authority
         .state
         .checkpoints
@@ -414,6 +430,7 @@ where
             seq,
             transactions.iter(),
             active_authority.state.database.clone(),
+            next_epoch_committee,
         )
 }
 
@@ -810,9 +827,7 @@ where
         "Going through remaining validators to generate fragments",
     );
 
-    let result = checkpoint_db
-        .lock()
-        .attempt_to_construct_checkpoint(committee);
+    let result = checkpoint_db.lock().attempt_to_construct_checkpoint();
 
     match result {
         Err(err) => {

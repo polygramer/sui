@@ -1,4 +1,4 @@
-// Copyright (c) 2022, Mysten Labs, Inc.
+// Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
 import cl from 'classnames';
@@ -29,6 +29,7 @@ type DisconnectAppProps = {
     address?: SuiAddress;
     permissions: string[];
     disconnect?: boolean;
+    pageLink?: string;
     setShowDisconnectApp: (showModal: boolean) => void;
 };
 
@@ -41,6 +42,7 @@ function DisconnectApp({
     account,
     id,
     permissions,
+    pageLink,
     setShowDisconnectApp,
 }: DisconnectAppProps) {
     const [showModal] = useState(true);
@@ -76,7 +78,7 @@ function DisconnectApp({
                         <div className={st.info}>
                             <div className={st.name}>{name}</div>
                             <ExternalLink
-                                href={link}
+                                href={pageLink || link}
                                 title={name}
                                 className={st.appLink}
                                 showIcon={false}
@@ -131,7 +133,7 @@ function DisconnectApp({
                         <span>Disconnect</span>
                     </Button>
                     <ExternalLink
-                        href={link}
+                        href={pageLink || link}
                         title={name}
                         className={cl('btn', st.ctaBtn, st.view)}
                         showIcon={false}

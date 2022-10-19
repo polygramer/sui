@@ -1,4 +1,4 @@
-// Copyright (c) 2022, Mysten Labs, Inc.
+// Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::{
@@ -324,10 +324,11 @@ where
 mod test {
     use super::*;
     use crate::{
-        authority_active::gossip::GossipMetrics, authority_client::NetworkAuthorityClient,
-        node_sync::SyncStatus, test_utils::test_authority_aggregator,
+        authority_active::gossip::GossipMetrics, authority_aggregator::AuthorityAggregatorBuilder,
+        authority_client::NetworkAuthorityClient, node_sync::SyncStatus,
     };
     use std::sync::{Arc, Mutex};
+    use sui_macros::sim_test;
     use sui_types::{
         base_types::ObjectID,
         crypto::get_account_key_pair,
@@ -426,7 +427,7 @@ mod test {
         Arc::new(NodeSyncStore::open_tables_read_write(db_path, None, None))
     }
 
-    #[tokio::test(flavor = "current_thread", start_paused = true)]
+    #[sim_test]
     async fn test_follower() {
         telemetry_subscribers::init_for_testing();
 
@@ -453,7 +454,10 @@ mod test {
         // Set up an authority
         let config = test_and_configure_authority_configs(1);
         let authorities = spawn_test_authorities(objects, &config).await;
-        let net = Arc::new(test_authority_aggregator(&config));
+        let (agg, _) = AuthorityAggregatorBuilder::from_network_config(&config)
+            .build()
+            .unwrap();
+        let net = Arc::new(agg);
 
         execute_transactions(&net, &transactions).await;
 
@@ -462,7 +466,7 @@ mod test {
             let sync_store = new_sync_store();
             let test_handler = TestNodeSyncHandler::new();
 
-            let peer = authorities[0].state().name;
+            let peer = authorities[0].with(|node| node.state().name);
             let metrics = GossipMetrics::new_for_tests();
             follow_one_peer(
                 test_handler.clone().break_after(1),
@@ -507,7 +511,7 @@ mod test {
 
             let metrics = GossipMetrics::new_for_tests();
 
-            let (_cancel_tx, cancel_rx) = tokio::sync::oneshot::channel();
+            let (_cancel_tx, cancel_rx) = oneshot::channel();
 
             let test_handler_clone = test_handler.clone();
             let net_clone = net.clone();

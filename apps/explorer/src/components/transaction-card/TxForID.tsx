@@ -1,4 +1,4 @@
-// Copyright (c) 2022, Mysten Labs, Inc.
+// Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
 import { type GetTxnDigestsResponse } from '@mysten/sui.js';
@@ -57,9 +57,7 @@ function TxForIDStatic({
     id: string;
     category: categoryType;
 }) {
-    const data = deduplicate(
-        findTxfromID(id)?.data as [number, string][] | undefined
-    )
+    const data = deduplicate(findTxfromID(id)?.data as string[] | undefined)
         .map((id) => findTxDatafromID(id))
         .filter((x) => x !== undefined) as TxnData[];
     if (!data) return <></>;

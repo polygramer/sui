@@ -1,20 +1,20 @@
-// Copyright (c) 2022, Mysten Labs, Inc.
+// Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 use config::{Authority, Committee, Epoch, WorkerIndex, WorkerInfo};
 use crypto::{KeyPair, NetworkKeyPair};
 use fastcrypto::{
+    hash::{Digest, Hash},
     traits::{KeyPair as _, Signer},
-    Digest, Hash,
 };
 use multiaddr::Multiaddr;
-use primary::PrimaryWorkerMessage;
 use rand::{prelude::StdRng, SeedableRng};
 use serde_reflection::{Registry, Result, Samples, Tracer, TracerConfig};
 use std::{fs::File, io::Write};
 use structopt::{clap::arg_enum, StructOpt};
 use types::{
     Batch, BatchDigest, Certificate, CertificateDigest, Header, HeaderDigest,
-    ReconfigureNotification, WorkerPrimaryError, WorkerPrimaryMessage, WorkerSynchronizeMessage,
+    ReconfigureNotification, WorkerOthersBatchMessage, WorkerOurBatchMessage, WorkerPrimaryMessage,
+    WorkerReconfigureMessage, WorkerSynchronizeMessage,
 };
 
 fn get_registry() -> Result<Registry> {
@@ -111,21 +111,29 @@ fn get_registry() -> Result<Registry> {
     );
     tracer.trace_value(&mut samples, &worker_index)?;
 
-    let cleanup = PrimaryWorkerMessage::Cleanup(1u64);
-    let request_batch = PrimaryWorkerMessage::RequestBatch(BatchDigest([0u8; 32]));
-    let delete_batch = PrimaryWorkerMessage::DeleteBatches(vec![BatchDigest([0u8; 32])]);
+    let our_batch = WorkerOurBatchMessage {
+        digest: BatchDigest([0u8; 32]),
+        worker_id: 0,
+    };
+    let others_batch = WorkerOthersBatchMessage {
+        digest: BatchDigest([0u8; 32]),
+        worker_id: 0,
+    };
     let sync = WorkerSynchronizeMessage {
         digests: vec![BatchDigest([0u8; 32])],
         target: pk,
     };
-    let epoch_change =
-        PrimaryWorkerMessage::Reconfigure(ReconfigureNotification::NewEpoch(committee.clone()));
-    let update_committee =
-        PrimaryWorkerMessage::Reconfigure(ReconfigureNotification::NewEpoch(committee));
-    let shutdown = PrimaryWorkerMessage::Reconfigure(ReconfigureNotification::Shutdown);
-    tracer.trace_value(&mut samples, &cleanup)?;
-    tracer.trace_value(&mut samples, &request_batch)?;
-    tracer.trace_value(&mut samples, &delete_batch)?;
+    let epoch_change = WorkerReconfigureMessage {
+        message: ReconfigureNotification::NewEpoch(committee.clone()),
+    };
+    let update_committee = WorkerReconfigureMessage {
+        message: ReconfigureNotification::NewEpoch(committee),
+    };
+    let shutdown = WorkerReconfigureMessage {
+        message: ReconfigureNotification::Shutdown,
+    };
+    tracer.trace_value(&mut samples, &our_batch)?;
+    tracer.trace_value(&mut samples, &others_batch)?;
     tracer.trace_value(&mut samples, &sync)?;
     tracer.trace_value(&mut samples, &epoch_change)?;
     tracer.trace_value(&mut samples, &update_committee)?;
@@ -139,7 +147,6 @@ fn get_registry() -> Result<Registry> {
 
     // The final entry points that we must document
     tracer.trace_type::<WorkerPrimaryMessage>(&samples)?;
-    tracer.trace_type::<WorkerPrimaryError>(&samples)?;
     tracer.registry()
 }
 

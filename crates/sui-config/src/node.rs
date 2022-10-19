@@ -1,7 +1,8 @@
-// Copyright (c) 2022, Mysten Labs, Inc.
+// Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::genesis;
+use crate::p2p::P2pConfig;
 use crate::Config;
 use anyhow::Result;
 use multiaddr::Multiaddr;
@@ -78,6 +79,9 @@ pub struct NodeConfig {
 
     #[serde(default = "default_concurrency_limit")]
     pub grpc_concurrency_limit: Option<usize>,
+
+    #[serde(default)]
+    pub p2p_config: P2pConfig,
 
     pub genesis: Genesis,
 }
@@ -171,7 +175,9 @@ impl NodeConfig {
 pub struct ConsensusConfig {
     pub consensus_address: Multiaddr,
     pub consensus_db_path: PathBuf,
-    pub delay_step: Option<u64>,
+    // Timeout to retry sending transaction to consensus internally.
+    // Default to 60s.
+    pub timeout_secs: Option<u64>,
 
     pub narwhal_config: ConsensusParameters,
 }
@@ -292,7 +298,7 @@ impl Genesis {
         }
     }
 
-    fn genesis(&self) -> Result<&genesis::Genesis> {
+    pub fn genesis(&self) -> Result<&genesis::Genesis> {
         match &self.location {
             GenesisLocation::InPlace { genesis } => Ok(genesis),
             GenesisLocation::File {

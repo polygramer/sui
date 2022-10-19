@@ -1,4 +1,4 @@
-// Copyright (c) 2022, Mysten Labs, Inc.
+// Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
 import { Provider } from '../../providers/provider';
@@ -9,6 +9,7 @@ import {
   isSharedObject,
   isValidSuiAddress,
   normalizeSuiObjectId,
+  ObjectId,
   SuiJsonValue,
   SuiMoveNormalizedType,
 } from '../../types';
@@ -21,6 +22,21 @@ const isTypeFunc = (type: string) => (t: any) => typeof t === type;
 
 export class CallArgSerializer {
   constructor(private provider: Provider) {}
+
+  async extractObjectIds(txn: MoveCallTransaction): Promise<ObjectId[]> {
+    const args = await this.serializeMoveCallArguments(txn);
+    return args
+      .map((arg) => {
+        if ('Object' in arg) {
+          const objectArg = arg.Object;
+          return 'Shared' in objectArg
+            ? objectArg.Shared
+            : objectArg.ImmOrOwned.objectId;
+        }
+        return null;
+      })
+      .filter((a) => a != null) as ObjectId[];
+  }
 
   async serializeMoveCallArguments(
     txn: MoveCallTransaction
@@ -75,8 +91,25 @@ export class CallArgSerializer {
       return { Object: await this.newObjectArg(argVal) };
     }
 
-    let serType = this.getPureSerializationType(expectedType, argVal);
+    if (
+      typeof expectedType === 'object' &&
+      'Vector' in expectedType &&
+      typeof expectedType.Vector === 'object' &&
+      'Struct' in expectedType.Vector
+    ) {
+      if (!Array.isArray(argVal)) {
+        throw new Error(
+          `Expect ${argVal} to be a array, received ${typeof argVal}`
+        );
+      }
+      return {
+        ObjVec: await Promise.all(
+          argVal.map((arg) => this.newObjectArg(arg as string))
+        ),
+      };
+    }
 
+    let serType = this.getPureSerializationType(expectedType, argVal);
     return {
       Pure: bcs.ser(serType, argVal).toBytes(),
     };
@@ -137,9 +170,12 @@ export class CallArgSerializer {
       return res;
     }
 
-    // TODO: update this once we support vector of object ids
     throw new Error(
-      `${MOVE_CALL_SER_ERROR} unknown normalized type ${normalizedType}`
+      `${MOVE_CALL_SER_ERROR} unknown normalized type ${JSON.stringify(
+        normalizedType,
+        null,
+        2
+      )}`
     );
   }
 
@@ -159,8 +195,9 @@ export class CallArgSerializer {
   }
 
   private isTxContext(param: SuiMoveNormalizedType): boolean {
-    const struct = extractMutableReference(param)?.Struct;
+    const struct = extractStructTag(param)?.Struct;
     return (
+      extractMutableReference(param) != null &&
       struct?.address === '0x2' &&
       struct?.module === 'tx_context' &&
       struct?.name === 'TxContext'

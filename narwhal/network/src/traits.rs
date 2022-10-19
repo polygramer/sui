@@ -1,4 +1,4 @@
-// Copyright (c) 2022, Mysten Labs, Inc.
+// Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 use crate::CancelOnDropHandler;
 use anyhow::Result;
@@ -6,7 +6,7 @@ use async_trait::async_trait;
 use crypto::NetworkPublicKey;
 use rand::prelude::{SliceRandom, SmallRng};
 use tokio::task::JoinHandle;
-use types::{Batch, BatchDigest};
+use types::{Batch, BatchDigest, FetchCertificatesRequest, FetchCertificatesResponse};
 
 pub trait UnreliableNetwork<Request: Clone + Send + Sync> {
     type Response: Clone + Send + Sync;
@@ -46,7 +46,7 @@ pub trait LuckyNetwork<Request> {
         peers: Vec<NetworkPublicKey>,
         message: &Request,
         num_nodes: usize,
-    ) -> Vec<Result<JoinHandle<anyhow::Result<anemo::Response<Self::Response>>>>>;
+    ) -> Vec<Result<JoinHandle<Result<anemo::Response<Self::Response>>>>>;
 }
 
 impl<T, M> LuckyNetwork<M> for T
@@ -76,13 +76,13 @@ pub trait ReliableNetwork<Request: Clone + Send + Sync> {
         &mut self,
         peer: NetworkPublicKey,
         message: &Request,
-    ) -> CancelOnDropHandler<anyhow::Result<anemo::Response<Self::Response>>>;
+    ) -> CancelOnDropHandler<Result<anemo::Response<Self::Response>>>;
 
     async fn broadcast(
         &mut self,
         peers: Vec<NetworkPublicKey>,
         message: &Request,
-    ) -> Vec<CancelOnDropHandler<anyhow::Result<anemo::Response<Self::Response>>>> {
+    ) -> Vec<CancelOnDropHandler<Result<anemo::Response<Self::Response>>>> {
         let mut handlers = Vec::new();
         for peer in peers {
             let handle = self.send(peer, message).await;
@@ -93,10 +93,21 @@ pub trait ReliableNetwork<Request: Clone + Send + Sync> {
 }
 
 #[async_trait]
+pub trait PrimaryToPrimaryRpc {
+    async fn fetch_certificates(
+        &self,
+        peer: &NetworkPublicKey,
+        request: FetchCertificatesRequest,
+    ) -> Result<FetchCertificatesResponse>;
+}
+
+#[async_trait]
 pub trait PrimaryToWorkerRpc {
     async fn request_batch(
         &self,
-        peer: &NetworkPublicKey,
+        peer: NetworkPublicKey,
         batch: BatchDigest,
     ) -> Result<Option<Batch>>;
+    async fn delete_batches(&self, peer: NetworkPublicKey, digests: Vec<BatchDigest>)
+        -> Result<()>;
 }

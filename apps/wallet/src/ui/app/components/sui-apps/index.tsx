@@ -1,4 +1,4 @@
-// Copyright (c) 2022, Mysten Labs, Inc.
+// Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
 import cl from 'classnames';
@@ -62,6 +62,7 @@ function AppsPlayGround() {
                       icon: isConnected.favIcon || app.icon,
                       // instance where the origin has a trailing slash and the app.link does not
                       link: isConnected.origin,
+                      pageLink: isConnected.pagelink,
                   }
                 : {}),
         };

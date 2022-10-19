@@ -1,14 +1,14 @@
 // Copyright (c) 2021, Facebook, Inc. and its affiliates
-// Copyright (c) 2022, Mysten Labs, Inc.
+// Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 use crate::{
     consensus::{ConsensusProtocol, ConsensusState, Dag},
     utils, ConsensusOutput,
 };
 use config::{Committee, Stake};
-use fastcrypto::{traits::EncodeDecodeBase64, Hash};
-use std::{collections::HashMap, sync::Arc};
-use tracing::debug;
+use fastcrypto::{hash::Hash, traits::EncodeDecodeBase64};
+use std::{collections::BTreeSet, sync::Arc};
+use tracing::{debug, error};
 use types::{Certificate, CertificateDigest, ConsensusStore, Round, SequenceNumber, StoreResult};
 
 #[cfg(test)]
@@ -35,12 +35,41 @@ impl ConsensusProtocol for Bullshark {
         let round = certificate.round();
         let mut consensus_index = consensus_index;
 
+        // We must have stored already the parents of this certiciate!
+        if round > 0 {
+            let parents = certificate.header.parents.clone();
+            if let Some(round_table) = state.dag.get(&(round - 1)) {
+                let store_parents: BTreeSet<&CertificateDigest> =
+                    round_table.iter().map(|(_, (digest, _))| digest).collect();
+
+                for parent_digest in parents {
+                    if !store_parents.contains(&parent_digest) {
+                        if round - 1 + self.gc_depth > state.last_committed_round {
+                            error!(
+                                "The store does not contain the parent of {:?}: Missing item digest={:?}",
+                                certificate, parent_digest
+                            );
+                        } else {
+                            debug!(
+                                "The store does not contain the parent of {:?}: Missing item digest={:?} (but below GC round)",
+                                certificate, parent_digest
+                            );
+                        }
+                    }
+                }
+            } else {
+                error!(
+                    "Round not present in Dag store: {:?} when looking for parents of {:?}",
+                    round - 1,
+                    certificate
+                );
+            }
+        }
+
         // Add the new certificate to the local storage.
-        state
-            .dag
-            .entry(round)
-            .or_insert_with(HashMap::new)
-            .insert(certificate.origin(), (certificate.digest(), certificate));
+        if state.try_insert(certificate).is_err() {
+            return Ok(Vec::new());
+        }
 
         // Try to order the dag to commit. Start from the highest round for which we have at least
         // f+1 certificates. This is because we need them to reveal the common coin.
@@ -84,10 +113,14 @@ impl ConsensusProtocol for Bullshark {
         // Get an ordered list of past leaders that are linked to the current leader.
         debug!("Leader {:?} has enough support", leader);
         let mut sequence = Vec::new();
+
+        // TODO: duplicated in tusk.rs
         for leader in utils::order_leaders(&self.committee, leader, state, Self::leader)
             .iter()
             .rev()
         {
+            debug!("Previous Leader {:?} has enough support", leader);
+
             // Starting from the oldest leader, flatten the sub-dag referenced by the leader.
             for x in utils::order_dag(self.gc_depth, leader, state) {
                 let digest = x.digest();
@@ -140,6 +173,7 @@ impl Bullshark {
         }
     }
 
+    // TODO: duplicated in tusk.rs
     /// Returns the certificate (and the certificate's digest) originated by the leader of the
     /// specified round (if any).
     fn leader<'a>(

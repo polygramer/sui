@@ -1,4 +1,4 @@
-// Copyright (c) 2022, Mysten Labs, Inc.
+// Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
 use std::env;
@@ -29,6 +29,7 @@ pub mod event_api;
 pub mod gateway_api;
 pub mod read_api;
 pub mod streaming_api;
+pub mod transaction_builder_api;
 pub mod transaction_execution_api;
 
 pub enum ServerBuilder<M = ()> {
@@ -78,7 +79,7 @@ pub struct JsonRpcServerBuilder {
 pub fn sui_rpc_doc() -> Project {
     Project::new(
         "Sui JSON-RPC",
-        "Sui JSON-RPC API for interaction with the Sui network gateway.",
+        "Sui JSON-RPC API for interaction with Sui Full node.",
         "Mysten Labs",
         "https://mystenlabs.com",
         "build@mystenlabs.com",

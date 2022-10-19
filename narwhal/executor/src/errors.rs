@@ -1,4 +1,4 @@
-// Copyright (c) 2022, Mysten Labs, Inc.
+// Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 use config::WorkerId;
 use std::fmt::Debug;
@@ -19,24 +19,6 @@ macro_rules! ensure {
         if !($cond) {
             bail!($e);
         }
-    };
-}
-
-#[macro_export]
-macro_rules! try_fut_and_permit {
-    ($fut:expr, $sender:expr) => {
-        futures::future::TryFutureExt::unwrap_or_else(
-            futures::future::try_join(
-                $fut,
-                futures::TryFutureExt::map_err($sender.reserve(), |_e| {
-                    SubscriberError::ClosedChannel(stringify!(sender).to_owned())
-                }),
-            ),
-            |e| {
-                tracing::error!("{e}");
-                panic!("I/O failure, killing the node.");
-            },
-        )
     };
 }
 

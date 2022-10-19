@@ -1,4 +1,4 @@
-// Copyright (c) 2022, Mysten Labs, Inc.
+// Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
 import { SignatureScheme } from '../cryptography/publickey';
@@ -24,11 +24,21 @@ import {
   SuiAddress,
   ObjectOwner,
   SuiEvents,
+  PaginatedTransactionDigests,
+  TransactionQuery,
+  Ordering,
 } from '../types';
 
 ///////////////////////////////
 // Exported Abstracts
 export abstract class Provider {
+  // API Version
+  /**
+   * Returns the current version of the RPC API that the provider is
+   * connected to
+   */
+  abstract getRpcApiVersion(): Promise<string>;
+
   // Objects
   /**
    * Get all objects owned by an address
@@ -46,11 +56,43 @@ export abstract class Provider {
 
   /**
    * Convenience method for getting all coins objects owned by an address
-   * @param typeArg optional argument for filter by coin type
+   * @param typeArg optional argument for filter by coin type, e.g., '0x2::sui::SUI'
    */
   abstract getCoinBalancesOwnedByAddress(
     address: string,
     typeArg?: string
+  ): Promise<GetObjectDataResponse[]>;
+
+  /**
+   * Convenience method for select coin objects that has a balance greater than or equal to `amount`
+   *
+   * @param amount coin balance
+   * @param typeArg coin type, e.g., '0x2::sui::SUI'
+   * @param exclude object ids of the coins to exclude
+   * @return a list of coin objects that has balance greater than `amount` in an ascending order
+   */
+  abstract selectCoinsWithBalanceGreaterThanOrEqual(
+    address: string,
+    amount: bigint,
+    typeArg: string,
+    exclude: ObjectId[]
+  ): Promise<GetObjectDataResponse[]>;
+
+  /**
+   * Convenience method for select a minimal set of coin objects that has a balance greater than
+   * or equal to `amount`. The output can be used for `PayTransaction`
+   *
+   * @param amount coin balance
+   * @param typeArg coin type, e.g., '0x2::sui::SUI'
+   * @param exclude object ids of the coins to exclude
+   * @return a minimal list of coin objects that has a combined balance greater than or equal
+   * to`amount` in an ascending order. If no such set exists, an empty list is returned
+   */
+  abstract selectCoinSetWithCombinedBalanceGreaterThanOrEqual(
+    address: string,
+    amount: bigint,
+    typeArg: string,
+    exclude: ObjectId[]
   ): Promise<GetObjectDataResponse[]>;
 
   /**
@@ -76,11 +118,14 @@ export abstract class Provider {
   ): Promise<GetTxnDigestsResponse>;
 
   /**
-   * Get the latest `count` transactions
-   *
-   * NOTE: this method may get deprecated after DevNet
+   * Get transactions for a given query criteria
    */
-  abstract getRecentTransactions(count: number): Promise<GetTxnDigestsResponse>;
+  abstract getTransactions(
+    query: TransactionQuery,
+    cursor: TransactionDigest | null,
+    limit: number | null,
+    order: Ordering
+  ): Promise<PaginatedTransactionDigests>;
 
   /**
    * Get total number of transactions

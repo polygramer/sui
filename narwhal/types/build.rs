@@ -1,4 +1,4 @@
-// Copyright (c) 2022, Mysten Labs, Inc.
+// Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
 use std::{
@@ -9,6 +9,9 @@ use std::{
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
 
 fn main() -> Result<()> {
+    #[cfg(not(target_env = "msvc"))]
+    std::env::set_var("PROTOC", protobuf_src::protoc());
+
     let out_dir = if env::var("DUMP_GENERATED_GRPC").is_ok() {
         PathBuf::from("")
     } else {
@@ -40,9 +43,13 @@ fn main() -> Result<()> {
 }
 
 fn build_anemo_services(out_dir: &Path) {
+    let mut automock_attribute = anemo_build::Attributes::default();
+    automock_attribute.push_trait(".", r#"#[mockall::automock]"#);
+
     let primary_to_primary = anemo_build::manual::Service::builder()
         .name("PrimaryToPrimary")
         .package("narwhal")
+        .attributes(automock_attribute.clone())
         .method(
             anemo_build::manual::Method::builder()
                 .name("send_message")
@@ -52,16 +59,26 @@ fn build_anemo_services(out_dir: &Path) {
                 .codec_path("anemo::rpc::codec::BincodeCodec")
                 .build(),
         )
+        .method(
+            anemo_build::manual::Method::builder()
+                .name("fetch_certificates")
+                .route_name("FetchCertificates")
+                .request_type("crate::FetchCertificatesRequest")
+                .response_type("crate::FetchCertificatesResponse")
+                .codec_path("anemo::rpc::codec::BincodeCodec")
+                .build(),
+        )
         .build();
 
     let primary_to_worker = anemo_build::manual::Service::builder()
         .name("PrimaryToWorker")
         .package("narwhal")
+        .attributes(automock_attribute.clone())
         .method(
             anemo_build::manual::Method::builder()
-                .name("send_message")
-                .route_name("SendMessage")
-                .request_type("crate::PrimaryWorkerMessage")
+                .name("reconfigure")
+                .route_name("Reconfigure")
+                .request_type("crate::WorkerReconfigureMessage")
                 .response_type("()")
                 .codec_path("anemo::rpc::codec::BincodeCodec")
                 .build(),
@@ -84,16 +101,44 @@ fn build_anemo_services(out_dir: &Path) {
                 .codec_path("anemo::rpc::codec::BincodeCodec")
                 .build(),
         )
+        .method(
+            anemo_build::manual::Method::builder()
+                .name("delete_batches")
+                .route_name("DeleteBatches")
+                .request_type("crate::WorkerDeleteBatchesMessage")
+                .response_type("()")
+                .codec_path("anemo::rpc::codec::BincodeCodec")
+                .build(),
+        )
         .build();
 
     let worker_to_primary = anemo_build::manual::Service::builder()
         .name("WorkerToPrimary")
         .package("narwhal")
+        .attributes(automock_attribute.clone())
         .method(
             anemo_build::manual::Method::builder()
                 .name("send_message")
                 .route_name("SendMessage")
                 .request_type("crate::WorkerPrimaryMessage")
+                .response_type("()")
+                .codec_path("anemo::rpc::codec::BincodeCodec")
+                .build(),
+        )
+        .method(
+            anemo_build::manual::Method::builder()
+                .name("report_our_batch")
+                .route_name("ReportOurBatch")
+                .request_type("crate::WorkerOurBatchMessage")
+                .response_type("()")
+                .codec_path("anemo::rpc::codec::BincodeCodec")
+                .build(),
+        )
+        .method(
+            anemo_build::manual::Method::builder()
+                .name("report_others_batch")
+                .route_name("ReportOthersBatch")
+                .request_type("crate::WorkerOthersBatchMessage")
                 .response_type("()")
                 .codec_path("anemo::rpc::codec::BincodeCodec")
                 .build(),
@@ -112,11 +157,12 @@ fn build_anemo_services(out_dir: &Path) {
     let worker_to_worker = anemo_build::manual::Service::builder()
         .name("WorkerToWorker")
         .package("narwhal")
+        .attributes(automock_attribute)
         .method(
             anemo_build::manual::Method::builder()
-                .name("send_message")
-                .route_name("SendMessage")
-                .request_type("crate::WorkerMessage")
+                .name("report_batch")
+                .route_name("ReportBatch")
+                .request_type("crate::WorkerBatchMessage")
                 .response_type("()")
                 .codec_path("anemo::rpc::codec::BincodeCodec")
                 .build(),

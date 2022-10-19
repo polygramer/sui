@@ -16,9 +16,10 @@ validator_configs:
     consensus-config:
       consensus-address: ""
       consensus-db-path: /tmp/foo/
-      delay-step: 15000
+      timeout-secs: 60
       narwhal-config:
-        header_size: 1000
+        header_num_of_batches_threshold: 32
+        max_header_num_of_batches: 1000
         max_header_delay: 100ms
         gc_depth: 50
         sync_retry_delay: 5000ms
@@ -38,12 +39,17 @@ validator_configs:
         max_concurrent_requests: 500000
         prometheus_metrics:
           socket_addr: /ip4/127.0.0.1/tcp/1234
+        network_admin_server:
+          primary_network_admin_server_port: 5678
+          worker_network_admin_server_base_port: 8765
     enable-event-processing: false
     enable-gossip: true
     enable-checkpoint: true
     enable-reconfig: false
     grpc-load-shed: ~
     grpc-concurrency-limit: 20000000000
+    p2p-config:
+      listen-address: "0.0.0.0:1"
     genesis:
       genesis: "[fake genesis]"
   - protocol-key-pair: LqPR5IijTDFVFUq2rCvOsiIO8dIRuXSAldAP+DYC1me2tykqD8b9TR5r1KXG1tk5NzsUp1pV97mzqOf4RZiHOuHRbC/7MTIsXXZZqIJo6WQCoJQf//aqfEwxf5hNpYWpnuGovtGTaPGU7tq29e9O7GmsMIAVjtZZHy3ribwbBb8=
@@ -59,9 +65,10 @@ validator_configs:
     consensus-config:
       consensus-address: ""
       consensus-db-path: /tmp/foo/
-      delay-step: 15000
+      timeout-secs: 60
       narwhal-config:
-        header_size: 1000
+        header_num_of_batches_threshold: 32
+        max_header_num_of_batches: 1000
         max_header_delay: 100ms
         gc_depth: 50
         sync_retry_delay: 5000ms
@@ -81,12 +88,17 @@ validator_configs:
         max_concurrent_requests: 500000
         prometheus_metrics:
           socket_addr: /ip4/127.0.0.1/tcp/1234
+        network_admin_server:
+          primary_network_admin_server_port: 5678
+          worker_network_admin_server_base_port: 8765
     enable-event-processing: false
     enable-gossip: true
     enable-checkpoint: true
     enable-reconfig: false
     grpc-load-shed: ~
     grpc-concurrency-limit: 20000000000
+    p2p-config:
+      listen-address: "0.0.0.0:1"
     genesis:
       genesis: "[fake genesis]"
   - protocol-key-pair: Hiq/0Ct6fmLhv1nBMiPqovOB6sOCfo5729qmN08q5xqmoXf1i/SZl1hJgzwzhR0tHh1rEBWcoC23JZIvZTv5l61M6Do8FX6cWWirPwYkXz0JpmyKSWt+uTVCq3nJc6q7GWTWC0H8eafBj9shurYTrgUf8CSXw6dc8Pwr8R2ywIw=
@@ -102,9 +114,10 @@ validator_configs:
     consensus-config:
       consensus-address: ""
       consensus-db-path: /tmp/foo/
-      delay-step: 15000
+      timeout-secs: 60
       narwhal-config:
-        header_size: 1000
+        header_num_of_batches_threshold: 32
+        max_header_num_of_batches: 1000
         max_header_delay: 100ms
         gc_depth: 50
         sync_retry_delay: 5000ms
@@ -124,12 +137,17 @@ validator_configs:
         max_concurrent_requests: 500000
         prometheus_metrics:
           socket_addr: /ip4/127.0.0.1/tcp/1234
+        network_admin_server:
+          primary_network_admin_server_port: 5678
+          worker_network_admin_server_base_port: 8765
     enable-event-processing: false
     enable-gossip: true
     enable-checkpoint: true
     enable-reconfig: false
     grpc-load-shed: ~
     grpc-concurrency-limit: 20000000000
+    p2p-config:
+      listen-address: "0.0.0.0:1"
     genesis:
       genesis: "[fake genesis]"
   - protocol-key-pair: GzzrEigjxChf2XnG0nSJuAfP6tSQo4A7/63k4hAOjOeL0OmML+RlsN3ntyxKDupYUwXe5MQI7aMEPczkE5dTxPsB5tOsw770PkhudQjw3uUWGaMSIoWHBQ6UUZvHWOR0/bXY9H9e+drIfENom4yTK3EAIGeyGL1OttmJk/XS2os=
@@ -145,9 +163,10 @@ validator_configs:
     consensus-config:
       consensus-address: ""
       consensus-db-path: /tmp/foo/
-      delay-step: 15000
+      timeout-secs: 60
       narwhal-config:
-        header_size: 1000
+        header_num_of_batches_threshold: 32
+        max_header_num_of_batches: 1000
         max_header_delay: 100ms
         gc_depth: 50
         sync_retry_delay: 5000ms
@@ -167,12 +186,17 @@ validator_configs:
         max_concurrent_requests: 500000
         prometheus_metrics:
           socket_addr: /ip4/127.0.0.1/tcp/1234
+        network_admin_server:
+          primary_network_admin_server_port: 5678
+          worker_network_admin_server_base_port: 8765
     enable-event-processing: false
     enable-gossip: true
     enable-checkpoint: true
     enable-reconfig: false
     grpc-load-shed: ~
     grpc-concurrency-limit: 20000000000
+    p2p-config:
+      listen-address: "0.0.0.0:1"
     genesis:
       genesis: "[fake genesis]"
   - protocol-key-pair: NsLWImHeTmGIB9KvW1EAu3X+tW7Q/KkI5gk3COXONCmm1yzKunhYP2XGQ4HKxwLtN5RUod5uTWXZX7P1wdIn2g5MbKFtB3Rj74n7dbqnia8Oqz14vEoSNUoxrh+6xLgU9IDbBhMKOlyOcHFrDQVkXoV75fge2er7vrS7f8/5wCw=
@@ -188,9 +212,10 @@ validator_configs:
     consensus-config:
       consensus-address: ""
       consensus-db-path: /tmp/foo/
-      delay-step: 15000
+      timeout-secs: 60
       narwhal-config:
-        header_size: 1000
+        header_num_of_batches_threshold: 32
+        max_header_num_of_batches: 1000
         max_header_delay: 100ms
         gc_depth: 50
         sync_retry_delay: 5000ms
@@ -210,12 +235,17 @@ validator_configs:
         max_concurrent_requests: 500000
         prometheus_metrics:
           socket_addr: /ip4/127.0.0.1/tcp/1234
+        network_admin_server:
+          primary_network_admin_server_port: 5678
+          worker_network_admin_server_base_port: 8765
     enable-event-processing: false
     enable-gossip: true
     enable-checkpoint: true
     enable-reconfig: false
     grpc-load-shed: ~
     grpc-concurrency-limit: 20000000000
+    p2p-config:
+      listen-address: "0.0.0.0:1"
     genesis:
       genesis: "[fake genesis]"
   - protocol-key-pair: CsRQrECMM8bjsounq/lp4HpZ78DfTEQ+8JZ8ep9Uwd2oUEn0LWkMFMIY2sZlOweOIHI1PV/hKGf74V8tdqFj1X3vaDCy7xCKXUrHW4MK4I8CQSs29yb3X//ssrVtkq3DHEUgHSiJu9bxRDABWZt1BPRnAJom/Ta3blmSnDSP0rE=
@@ -231,9 +261,10 @@ validator_configs:
     consensus-config:
       consensus-address: ""
       consensus-db-path: /tmp/foo/
-      delay-step: 15000
+      timeout-secs: 60
       narwhal-config:
-        header_size: 1000
+        header_num_of_batches_threshold: 32
+        max_header_num_of_batches: 1000
         max_header_delay: 100ms
         gc_depth: 50
         sync_retry_delay: 5000ms
@@ -253,12 +284,17 @@ validator_configs:
         max_concurrent_requests: 500000
         prometheus_metrics:
           socket_addr: /ip4/127.0.0.1/tcp/1234
+        network_admin_server:
+          primary_network_admin_server_port: 5678
+          worker_network_admin_server_base_port: 8765
     enable-event-processing: false
     enable-gossip: true
     enable-checkpoint: true
     enable-reconfig: false
     grpc-load-shed: ~
     grpc-concurrency-limit: 20000000000
+    p2p-config:
+      listen-address: "0.0.0.0:1"
     genesis:
       genesis: "[fake genesis]"
   - protocol-key-pair: ATtFYSC+WduPcjkDb5W/0qmeY8rJakh27PTldLq+nuaoaYghGPn/1BWEWXhXazXPUQf8cN4uOBzwlLo6iPuLQNcbp2Pg5RHFiVKZxrNDM6wNbuWCIMktDH6wzEJFDLBAb6alikZSqgMsGoi5ZpmIdqI0p+jHsU8TyXZ5wHORhWA=
@@ -274,9 +310,10 @@ validator_configs:
     consensus-config:
       consensus-address: ""
       consensus-db-path: /tmp/foo/
-      delay-step: 15000
+      timeout-secs: 60
       narwhal-config:
-        header_size: 1000
+        header_num_of_batches_threshold: 32
+        max_header_num_of_batches: 1000
         max_header_delay: 100ms
         gc_depth: 50
         sync_retry_delay: 5000ms
@@ -296,12 +333,17 @@ validator_configs:
         max_concurrent_requests: 500000
         prometheus_metrics:
           socket_addr: /ip4/127.0.0.1/tcp/1234
+        network_admin_server:
+          primary_network_admin_server_port: 5678
+          worker_network_admin_server_base_port: 8765
     enable-event-processing: false
     enable-gossip: true
     enable-checkpoint: true
     enable-reconfig: false
     grpc-load-shed: ~
     grpc-concurrency-limit: 20000000000
+    p2p-config:
+      listen-address: "0.0.0.0:1"
     genesis:
       genesis: "[fake genesis]"
 account_keys:

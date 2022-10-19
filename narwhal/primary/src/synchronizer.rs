@@ -1,11 +1,11 @@
 // Copyright (c) 2021, Facebook, Inc. and its affiliates
-// Copyright (c) 2022, Mysten Labs, Inc.
+// Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 use crate::{header_waiter::WaiterMessage, primary::PayloadToken};
 use config::{Committee, WorkerId};
 use consensus::dag::Dag;
 use crypto::PublicKey;
-use fastcrypto::Hash as _;
+use fastcrypto::hash::Hash as _;
 use std::{collections::HashMap, sync::Arc};
 use storage::CertificateStore;
 use store::Store;
@@ -102,10 +102,10 @@ impl Synchronizer {
             return Ok(false);
         }
 
-        self.tx_header_waiter
-            .send(WaiterMessage::SyncBatches(missing, header.clone()))
-            .await
-            .expect("Failed to send sync batch request");
+        // Ok to drop header if its payloads are missing and HeaderWaiter is overloaded.
+        let _ = self
+            .tx_header_waiter
+            .try_send(WaiterMessage::SyncBatches(missing, header.clone()));
         Ok(true)
     }
 
@@ -136,10 +136,10 @@ impl Synchronizer {
             return Ok(parents);
         }
 
-        self.tx_header_waiter
-            .send(WaiterMessage::SyncParents(missing, header.clone()))
-            .await
-            .expect("Failed to send sync parents request");
+        // Ok to drop header if its parents are missing and HeaderWaiter is overloaded.
+        let _ = self
+            .tx_header_waiter
+            .try_send(WaiterMessage::SyncParents(missing, header.clone()));
         Ok(Vec::new())
     }
 

@@ -1,6 +1,7 @@
-// Copyright (c) 2022, Mysten Labs, Inc.
+// Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+import { getTransactionDigest } from '@mysten/sui.js';
 import { Formik } from 'formik';
 import { useCallback, useMemo, useState } from 'react';
 import { useIntl } from 'react-intl';
@@ -120,12 +121,12 @@ function TransferCoinPage() {
                 ).unwrap();
 
                 resetForm();
-                const txDigest = response.certificate.transactionDigest;
-                const recieptUrl = `/receipt?txdigest=${encodeURIComponent(
+                const txDigest = getTransactionDigest(response);
+                const receiptUrl = `/receipt?txdigest=${encodeURIComponent(
                     txDigest
                 )}&transfer=coin`;
 
-                navigate(recieptUrl);
+                navigate(receiptUrl);
             } catch (e) {
                 setSendError((e as SerializedError).message || null);
             }

@@ -1,4 +1,4 @@
-// Copyright (c) 2022, Mysten Labs, Inc.
+// Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
 #[cfg(msim)]
@@ -8,9 +8,9 @@ mod test {
     use std::sync::Arc;
     use std::time::Duration;
     use sui_config::SUI_KEYSTORE_FILENAME;
-    use sui_core::test_utils::test_authority_aggregator;
+    use sui_core::authority_aggregator::AuthorityAggregatorBuilder;
     use test_utils::{
-        messages::get_gas_object_with_wallet_context, network::setup_network_and_wallet,
+        messages::get_gas_object_with_wallet_context, network::init_cluster_builder_env_aware,
     };
 
     use sui_benchmark::{
@@ -50,11 +50,15 @@ mod test {
 
     #[sim_test(config = "test_config()")]
     async fn test_simulated_load() {
-        let (swarm, context, sender) = setup_network_and_wallet().await.unwrap();
+        let test_cluster = init_cluster_builder_env_aware().build().await.unwrap();
+        let swarm = &test_cluster.swarm;
+        let context = &test_cluster.wallet;
+        let sender = test_cluster.get_address_0();
+
         let keystore_path = swarm.dir().join(SUI_KEYSTORE_FILENAME);
         let ed25519_keypair = get_ed25519_keypair_from_keystore(keystore_path, &sender).unwrap();
 
-        let gas = get_gas_object_with_wallet_context(&context, &sender)
+        let gas = get_gas_object_with_wallet_context(context, &sender)
             .await
             .expect("Expect {sender} to have at least one gas object");
 
@@ -72,7 +76,10 @@ mod test {
             1,  // transfer_object_weight
         )];
 
-        let aggregator = Arc::new(test_authority_aggregator(swarm.config()));
+        let (aggregator, _) = AuthorityAggregatorBuilder::from_network_config(swarm.config())
+            .build()
+            .unwrap();
+        let aggregator = Arc::new(aggregator);
 
         for w in workloads.iter_mut() {
             w.workload.init(aggregator.clone()).await;

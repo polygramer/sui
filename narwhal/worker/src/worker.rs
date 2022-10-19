@@ -1,14 +1,12 @@
 // Copyright (c) 2021, Facebook, Inc. and its affiliates
-// Copyright (c) 2022, Mysten Labs, Inc.
+// Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 use crate::{
     batch_maker::BatchMaker,
-    handlers::{ChildRpcSender, PrimaryReceiverHandler, WorkerReceiverHandler},
+    handlers::{PrimaryReceiverHandler, WorkerReceiverHandler},
     metrics::WorkerChannelMetrics,
     primary_connector::PrimaryConnector,
-    processor::Processor,
     quorum_waiter::QuorumWaiter,
-    synchronizer::Synchronizer,
 };
 use anemo::{types::PeerInfo, PeerId};
 use anemo_tower::{callback::CallbackLayer, trace::TraceLayer};
@@ -19,7 +17,6 @@ use futures::StreamExt;
 use multiaddr::{Multiaddr, Protocol};
 use network::metrics::MetricsMakeCallbackHandler;
 use network::P2pNetwork;
-use primary::PrimaryWorkerMessage;
 use std::{net::Ipv4Addr, sync::Arc};
 use store::Store;
 use tokio::{sync::watch, task::JoinHandle};
@@ -28,9 +25,10 @@ use tower::ServiceBuilder;
 use tracing::info;
 use types::{
     error::DagError,
-    metered_channel::{channel, Receiver, Sender},
+    metered_channel::{channel_with_total, Sender},
     Batch, BatchDigest, Empty, PrimaryToWorkerServer, ReconfigureNotification, Transaction,
-    TransactionProto, Transactions, TransactionsServer, WorkerPrimaryMessage, WorkerToWorkerServer,
+    TransactionProto, Transactions, TransactionsServer, WorkerOurBatchMessage,
+    WorkerToWorkerServer,
 };
 
 #[cfg(test)]
@@ -41,7 +39,6 @@ pub mod worker_tests;
 pub const CHANNEL_CAPACITY: usize = 1_000;
 
 use crate::metrics::{Metrics, WorkerEndpointMetrics, WorkerMetrics};
-pub use types::WorkerMessage;
 
 pub struct Worker {
     /// The public key of this authority.
@@ -78,7 +75,7 @@ impl Worker {
             id,
             committee: committee.clone(),
             worker_cache,
-            parameters,
+            parameters: parameters.clone(),
             store,
         };
 
@@ -87,34 +84,38 @@ impl Worker {
         let channel_metrics: Arc<WorkerChannelMetrics> = Arc::new(metrics.channel_metrics.unwrap());
         let inbound_network_metrics = Arc::new(metrics.inbound_network_metrics.unwrap());
         let outbound_network_metrics = Arc::new(metrics.outbound_network_metrics.unwrap());
+        let network_connection_metrics = metrics.network_connection_metrics.unwrap();
 
         // Spawn all worker tasks.
-        let (tx_primary, rx_primary) = channel(CHANNEL_CAPACITY, &channel_metrics.tx_primary);
+        let (tx_our_batch, rx_our_batch) = channel_with_total(
+            CHANNEL_CAPACITY,
+            &channel_metrics.tx_our_batch,
+            &channel_metrics.tx_our_batch_total,
+        );
+        let (tx_others_batch, rx_others_batch) = channel_with_total(
+            CHANNEL_CAPACITY,
+            &channel_metrics.tx_others_batch,
+            &channel_metrics.tx_others_batch_total,
+        );
 
         let initial_committee = (*(*(*committee).load()).clone()).clone();
         let (tx_reconfigure, rx_reconfigure) =
             watch::channel(ReconfigureNotification::NewEpoch(initial_committee));
 
-        let (tx_worker_processor, rx_worker_processor) =
-            channel(CHANNEL_CAPACITY, &channel_metrics.tx_worker_processor);
-        let (tx_synchronizer, rx_synchronizer) =
-            channel(CHANNEL_CAPACITY, &channel_metrics.tx_synchronizer);
-        let (tx_request_batches_rpc, rx_request_batches_rpc) =
-            channel(CHANNEL_CAPACITY, &channel_metrics.tx_request_batches_rpc);
-
         let worker_service = WorkerToWorkerServer::new(WorkerReceiverHandler {
-            tx_processor: tx_worker_processor.clone(),
+            id: worker.id,
+            tx_others_batch,
             store: worker.store.clone(),
         });
         let primary_service = PrimaryToWorkerServer::new(PrimaryReceiverHandler {
+            name: worker.primary_name.clone(),
             id: worker.id,
+            committee: worker.committee.clone(),
             worker_cache: worker.worker_cache.clone(),
             store: worker.store.clone(),
+            request_batches_timeout: worker.parameters.sync_retry_delay,
             request_batches_retry_nodes: worker.parameters.sync_retry_nodes,
-            tx_synchronizer,
-            tx_request_batches_rpc,
-            tx_primary: tx_primary.clone(),
-            tx_batch_processor: tx_worker_processor,
+            tx_reconfigure,
         });
 
         // Receive incoming messages from other workers.
@@ -135,26 +136,44 @@ impl Worker {
             .add_rpc_service(primary_service);
 
         let service = ServiceBuilder::new()
-            .layer(TraceLayer::new())
+            .layer(TraceLayer::new_for_server_errors())
             .layer(CallbackLayer::new(MetricsMakeCallbackHandler::new(
                 inbound_network_metrics,
             )))
             .service(routes);
 
         let outbound_layer = ServiceBuilder::new()
-            .layer(TraceLayer::new())
+            .layer(TraceLayer::new_for_client_and_server_errors())
             .layer(CallbackLayer::new(MetricsMakeCallbackHandler::new(
                 outbound_network_metrics,
             )))
             .into_inner();
+
+        let anemo_config = {
+            let mut quic_config = anemo::QuicConfig::default();
+            // Enable keep alives every 5s
+            quic_config.keep_alive_interval_ms = Some(5_000);
+            let mut config = anemo::Config::default();
+            config.quic = Some(quic_config);
+            // Set a default timeout of 30s for all outbound RPC requests
+            config.outbound_request_timeout_ms = Some(30_000);
+            config
+        };
+
         let network = anemo::Network::bind(addr)
             .server_name("narwhal")
             .private_key(worker.keypair.copy().private().0.to_bytes())
+            .config(anemo_config)
             .outbound_request_layer(outbound_layer)
             .start(service)
             .unwrap();
 
         info!("Worker {} listening to worker messages on {}", id, address);
+
+        let connection_monitor_handle = network::connectivity::ConnectionMonitor::spawn(
+            network.downgrade(),
+            network_connection_metrics,
+        );
 
         let other_workers = worker
             .worker_cache
@@ -179,6 +198,22 @@ impl Worker {
             network.known_peers().insert(peer_info);
         }
 
+        let network_admin_server_base_port = parameters
+            .network_admin_server
+            .worker_network_admin_server_base_port
+            .checked_add(id as u16)
+            .unwrap();
+        info!(
+            "Worker {} listening to network admin messages on 127.0.0.1:{}",
+            id, network_admin_server_base_port
+        );
+
+        network::admin::start_admin_server(
+            network_admin_server_base_port,
+            network.clone(),
+            rx_reconfigure.clone(),
+        );
+
         // Connect worker to its corresponding primary.
         let primary_address = network::multiaddr_to_address(
             &committee
@@ -192,40 +227,25 @@ impl Worker {
             .network_key(&primary_name)
             .expect("Our primary is not in the committee");
         network.known_peers().insert(PeerInfo {
-            peer_id: anemo::PeerId(primary_network_key.0.to_bytes()),
+            peer_id: PeerId(primary_network_key.0.to_bytes()),
             affinity: anemo::types::PeerAffinity::High,
             address: vec![primary_address],
         });
         let primary_connector_handle = PrimaryConnector::spawn(
             primary_network_key,
             rx_reconfigure.clone(),
-            rx_primary,
-            network::P2pNetwork::new(network.clone()),
-        );
-        let child_rpc_sender_handle = ChildRpcSender::spawn(
-            worker.primary_name.clone(),
-            worker.id,
-            worker.worker_cache.clone(),
-            worker.parameters.sync_retry_delay,
-            rx_request_batches_rpc,
-            rx_reconfigure,
-            network::P2pNetwork::new(network.clone()),
+            rx_our_batch,
+            rx_others_batch,
+            P2pNetwork::new(network.clone()),
         );
         let client_flow_handles = worker.handle_clients_transactions(
-            &tx_reconfigure,
-            tx_primary.clone(),
+            rx_reconfigure,
+            tx_our_batch,
             node_metrics,
             channel_metrics,
             endpoint_metrics,
-            network.clone(),
+            network,
         );
-        let worker_flow_handles = worker.handle_workers_messages(
-            &tx_reconfigure,
-            tx_primary.clone(),
-            rx_worker_processor,
-        );
-        let primary_flow_handles =
-            worker.handle_primary_messages(rx_synchronizer, tx_reconfigure, tx_primary, network);
 
         // NOTE: This log entry is used to compute performance.
         info!(
@@ -239,52 +259,31 @@ impl Worker {
                 .transactions
         );
 
-        let mut handles = vec![primary_connector_handle, child_rpc_sender_handle];
-        handles.extend(primary_flow_handles);
+        let mut handles = vec![primary_connector_handle, connection_monitor_handle];
         handles.extend(client_flow_handles);
-        handles.extend(worker_flow_handles);
         handles
-    }
-
-    /// Spawn all tasks responsible to handle messages from our primary.
-    fn handle_primary_messages(
-        &self,
-        rx_synchronizer: Receiver<PrimaryWorkerMessage>,
-        tx_reconfigure: watch::Sender<ReconfigureNotification>,
-        tx_primary: Sender<WorkerPrimaryMessage>,
-        network: anemo::Network,
-    ) -> Vec<JoinHandle<()>> {
-        // The `Synchronizer` is responsible to keep the worker in sync with the others. It handles the commands
-        // it receives from the primary (which are mainly notifications that we are out of sync).
-        let handle = Synchronizer::spawn(
-            self.committee.clone(),
-            self.worker_cache.clone(),
-            self.store.clone(),
-            /* rx_message */ rx_synchronizer,
-            tx_reconfigure,
-            tx_primary,
-            P2pNetwork::new(network),
-        );
-
-        vec![handle]
     }
 
     /// Spawn all tasks responsible to handle clients transactions.
     fn handle_clients_transactions(
         &self,
-        tx_reconfigure: &watch::Sender<ReconfigureNotification>,
-        tx_primary: Sender<WorkerPrimaryMessage>,
+        rx_reconfigure: watch::Receiver<ReconfigureNotification>,
+        tx_our_batch: Sender<WorkerOurBatchMessage>,
         node_metrics: Arc<WorkerMetrics>,
         channel_metrics: Arc<WorkerChannelMetrics>,
         endpoint_metrics: WorkerEndpointMetrics,
         network: anemo::Network,
     ) -> Vec<JoinHandle<()>> {
-        let (tx_batch_maker, rx_batch_maker) =
-            channel(CHANNEL_CAPACITY, &channel_metrics.tx_batch_maker);
-        let (tx_quorum_waiter, rx_quorum_waiter) =
-            channel(CHANNEL_CAPACITY, &channel_metrics.tx_quorum_waiter);
-        let (tx_client_processor, rx_client_processor) =
-            channel(CHANNEL_CAPACITY, &channel_metrics.tx_client_processor);
+        let (tx_batch_maker, rx_batch_maker) = channel_with_total(
+            CHANNEL_CAPACITY,
+            &channel_metrics.tx_batch_maker,
+            &channel_metrics.tx_batch_maker_total,
+        );
+        let (tx_quorum_waiter, rx_quorum_waiter) = channel_with_total(
+            CHANNEL_CAPACITY,
+            &channel_metrics.tx_quorum_waiter,
+            &channel_metrics.tx_quorum_waiter_total,
+        );
 
         // We first receive clients' transactions from the network.
         let address = self
@@ -298,7 +297,7 @@ impl Worker {
             .unwrap();
         let tx_receiver_handle = TxReceiverHandler { tx_batch_maker }.spawn(
             address.clone(),
-            tx_reconfigure.subscribe(),
+            rx_reconfigure.clone(),
             endpoint_metrics,
         );
 
@@ -309,7 +308,7 @@ impl Worker {
             (*(*(*self.committee).load()).clone()).clone(),
             self.parameters.batch_size,
             self.parameters.max_batch_delay,
-            tx_reconfigure.subscribe(),
+            rx_reconfigure.clone(),
             /* rx_transaction */ rx_batch_maker,
             /* tx_message */ tx_quorum_waiter,
             node_metrics,
@@ -320,23 +319,13 @@ impl Worker {
         let quorum_waiter_handle = QuorumWaiter::spawn(
             self.primary_name.clone(),
             self.id,
+            self.store.clone(),
             (*(*(*self.committee).load()).clone()).clone(),
             self.worker_cache.clone(),
-            tx_reconfigure.subscribe(),
+            rx_reconfigure,
             /* rx_message */ rx_quorum_waiter,
-            /* tx_batch */ tx_client_processor,
+            /* tx_batch */ tx_our_batch,
             P2pNetwork::new(network),
-        );
-
-        // The `Processor` hashes and stores the batch. It then forwards the batch's digest to the `PrimaryConnector`
-        // that will send it to our primary machine.
-        let processor_handle = Processor::spawn(
-            self.id,
-            self.store.clone(),
-            tx_reconfigure.subscribe(),
-            /* rx_batch */ rx_client_processor,
-            /* tx_digest */ tx_primary,
-            /* own_batch */ true,
         );
 
         info!(
@@ -344,33 +333,7 @@ impl Worker {
             self.id, address
         );
 
-        vec![
-            batch_maker_handle,
-            quorum_waiter_handle,
-            processor_handle,
-            tx_receiver_handle,
-        ]
-    }
-
-    /// Spawn all tasks responsible to handle messages from other workers.
-    fn handle_workers_messages(
-        &self,
-        tx_reconfigure: &watch::Sender<ReconfigureNotification>,
-        tx_primary: Sender<WorkerPrimaryMessage>,
-        rx_worker_processor: types::metered_channel::Receiver<Batch>,
-    ) -> Vec<JoinHandle<()>> {
-        // This `Processor` hashes and stores the batches we receive from the other workers. It then forwards the
-        // batch's digest to the `PrimaryConnector` that will send it to our primary.
-        let processor_handle = Processor::spawn(
-            self.id,
-            self.store.clone(),
-            tx_reconfigure.subscribe(),
-            /* rx_batch */ rx_worker_processor,
-            /* tx_digest */ tx_primary,
-            /* own_batch */ false,
-        );
-
-        vec![processor_handle]
+        vec![batch_maker_handle, quorum_waiter_handle, tx_receiver_handle]
     }
 }
 
@@ -434,8 +397,8 @@ impl Transactions for TxReceiverHandler {
 
     async fn submit_transaction_stream(
         &self,
-        request: tonic::Request<tonic::Streaming<types::TransactionProto>>,
-    ) -> Result<tonic::Response<types::Empty>, tonic::Status> {
+        request: Request<tonic::Streaming<types::TransactionProto>>,
+    ) -> Result<Response<types::Empty>, Status> {
         let mut transactions = request.into_inner();
 
         while let Some(Ok(txn)) = transactions.next().await {

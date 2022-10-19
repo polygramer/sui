@@ -4,12 +4,16 @@ jobs:
   diff:
     runs-on: [ubuntu-latest]
     outputs:
-      isTypescriptSDK: ${{ contains(fromJson(steps.diff.outputs.packages), '@mysten/sui.js') }}
+      isTypescriptSDK: ${{ contains(fromJson(steps.pnpm.outputs.packages), '@mysten/sui.js') || steps.diff.outputs.isRust }}
     steps:
       - uses: actions/checkout@v3
-      - name: Detect Changes
+      - name: Detect Changes (pnpm)
         uses: "./.github/actions/pnpm-diffs"
+        id: pnpm
+      - name: Detect Changes (diff)
+        uses: "./.github/actions/diffs"
         id: diff
+
   client_checks:
     name: Test & Build
     needs: diff
@@ -18,7 +22,7 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v3
-      - uses: pnpm/action-setup@v2.2.2
+      - uses: pnpm/action-setup@v2.2.4
         with:
           version: 7
       - name: Install Nodejs
@@ -40,10 +44,10 @@ jobs:
     steps:
       - uses: actions/checkout@v3
       - uses: actions-rs/toolchain@v1
-      - uses: pnpm/action-setup@v2.2.2
+      - uses: pnpm/action-setup@v2.2.4
         with:
           version: 7
-      - run: cargo build --bin sui-test-validator --profile dev
+      - run: cargo build --bin sui-test-validator --bin sui --profile dev
       - name: Install Nodejs
         uses: actions/setup-node@v3
         with:

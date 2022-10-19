@@ -1,6 +1,8 @@
 // Copyright (c) 2021, Facebook, Inc. and its affiliates
-// Copyright (c) 2022, Mysten Labs, Inc.
+// Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
+
+use crate::test_utils::to_sender_signed_transaction;
 
 use super::*;
 use bcs;
@@ -11,7 +13,6 @@ use move_binary_format::{
 use move_core_types::{
     account_address::AccountAddress, ident_str, identifier::Identifier, language_storage::TypeTag,
 };
-use narwhal_executor::ExecutionIndices;
 use rand::{
     distributions::{Distribution, Uniform},
     prelude::StdRng,
@@ -144,10 +145,9 @@ async fn construct_shared_object_transaction_with_sequence_number(
         ],
         MAX_GAS,
     );
-    let signature = Signature::new(&data, &keypair);
     (
         authority,
-        Transaction::new(data, signature),
+        to_sender_signed_transaction(data, &keypair),
         gas_object_id,
         shared_object_id,
     )
@@ -213,8 +213,17 @@ async fn test_handle_transfer_transaction_bad_signature() {
 
     let (_unknown_address, unknown_key): (_, AccountKeyPair) = get_key_pair();
     let mut bad_signature_transfer_transaction = transfer_transaction.clone();
-    bad_signature_transfer_transaction.signed_data.tx_signature =
-        Signature::new(&transfer_transaction.signed_data.data, &unknown_key);
+    bad_signature_transfer_transaction.signed_data.tx_signature = Signature::new_temp(
+        &transfer_transaction.signed_data.data.to_bytes(),
+        &unknown_key,
+    );
+
+    // bad_signature_transfer_transaction.signed_data.tx_signature = Signature::new_secure(
+    //     &transfer_transaction.signed_data.data,
+    //     Intent::default(),
+    //     &unknown_key,
+    // )
+    // .unwrap();
     assert!(authority_state
         .handle_transaction(bad_signature_transfer_transaction)
         .await
@@ -543,11 +552,9 @@ async fn test_objected_owned_gas() {
         child_object.compute_object_reference(),
         10000,
     );
-    let signature = Signature::new(&data, &sender_key);
-    let transfer_transaction = Transaction::new(data, signature);
-    let result = authority_state
-        .handle_transaction(transfer_transaction.clone())
-        .await;
+
+    let transaction = to_sender_signed_transaction(data, &sender_key);
+    let result = authority_state.handle_transaction(transaction).await;
     assert!(matches!(
         result.unwrap_err(),
         SuiError::InsufficientGas { .. }
@@ -589,7 +596,7 @@ pub async fn send_and_confirm_transaction_with_shared(
 
     // Submit the confirmation. *Now* execution actually happens, and it should fail when we try to look up our dummy module.
     // we unfortunately don't get a very descriptive error message, but we can at least see that something went wrong inside the VM
-    authority.handle_certificate(certificate).await
+    authority.handle_certificate(&certificate).await
 }
 
 /// Create a `CompiledModule` that depends on `m`
@@ -638,8 +645,7 @@ async fn test_publish_dependent_module_ok() {
         vec![dependent_module_bytes],
         MAX_GAS,
     );
-    let signature = Signature::new(&data, &sender_key);
-    let transaction = Transaction::new(data, signature);
+    let transaction = to_sender_signed_transaction(data, &sender_key);
 
     let dependent_module_id = TxContext::new(&sender, transaction.digest(), 0).fresh_id();
 
@@ -674,8 +680,7 @@ async fn test_publish_module_no_dependencies_ok() {
     module.serialize(&mut module_bytes).unwrap();
     let module_bytes = vec![module_bytes];
     let data = TransactionData::new_module(sender, gas_payment_object_ref, module_bytes, MAX_GAS);
-    let signature = Signature::new(&data, &sender_key);
-    let transaction = Transaction::new(data, signature);
+    let transaction = to_sender_signed_transaction(data, &sender_key);
     let _module_object_id = TxContext::new(&sender, transaction.digest(), 0).fresh_id();
     let response = send_and_confirm_transaction(&authority, transaction)
         .await
@@ -723,9 +728,7 @@ async fn test_publish_non_existing_dependent_module() {
         vec![dependent_module_bytes],
         MAX_GAS,
     );
-    let signature = Signature::new(&data, &sender_key);
-    let transaction = Transaction::new(data, signature);
-
+    let transaction = to_sender_signed_transaction(data, &sender_key);
     let response = authority.handle_transaction(transaction).await;
     assert!(std::string::ToString::to_string(&response.unwrap_err())
         .contains("DependentPackageNotFound"));
@@ -831,9 +834,7 @@ async fn test_handle_transfer_sui_with_amount_insufficient_gas() {
         object.compute_object_reference(),
         200,
     );
-    let signature = Signature::new(&data, &sender_key);
-    let transaction = Transaction::new(data, signature);
-
+    let transaction = to_sender_signed_transaction(data, &sender_key);
     let result = authority_state.handle_transaction(transaction).await;
     assert!(matches!(
         result.unwrap_err(),
@@ -866,7 +867,7 @@ async fn test_handle_confirmation_transaction_unknown_sender() {
     );
 
     assert!(authority_state
-        .handle_certificate(certified_transfer_transaction)
+        .handle_certificate(&certified_transfer_transaction)
         .await
         .is_err());
 }
@@ -933,7 +934,7 @@ async fn test_handle_confirmation_transaction_bad_sequence_number() {
     // Explanation: providing an old cert that has already need applied
     //              returns a Ok(_) with info about the new object states.
     let response = authority_state
-        .handle_certificate(certified_transfer_transaction)
+        .handle_certificate(&certified_transfer_transaction)
         .await
         .unwrap();
     assert!(response.signed_effects.is_none());
@@ -977,7 +978,7 @@ async fn test_handle_confirmation_transaction_receiver_equal_sender() {
         &authority_state,
     );
     let response = authority_state
-        .handle_certificate(certified_transfer_transaction)
+        .handle_certificate(&certified_transfer_transaction)
         .await
         .unwrap();
     response.signed_effects.unwrap().effects.status.unwrap();
@@ -1031,7 +1032,7 @@ async fn test_handle_confirmation_transaction_ok() {
     next_sequence_number = next_sequence_number.increment();
 
     let info = authority_state
-        .handle_certificate(certified_transfer_transaction.clone())
+        .handle_certificate(&certified_transfer_transaction.clone())
         .await
         .unwrap();
     info.signed_effects.unwrap().effects.status.unwrap();
@@ -1172,7 +1173,7 @@ async fn test_handle_certificate_interrupted_retry() {
         let state1 = authority_state.clone();
 
         let limited_fut = Box::pin(LimitedPoll::new(*limit, async move {
-            state1.handle_certificate(clone1).await.unwrap();
+            state1.handle_certificate(&clone1).await.unwrap();
         }));
 
         let res = limited_fut.await;
@@ -1194,7 +1195,7 @@ async fn test_handle_certificate_interrupted_retry() {
 
         // Now run the tx to completion
         let info = authority_state
-            .handle_certificate(shared_object_cert.clone())
+            .handle_certificate(&shared_object_cert)
             .await
             .unwrap();
 
@@ -1234,13 +1235,13 @@ async fn test_handle_confirmation_transaction_idempotent() {
     );
 
     let info = authority_state
-        .handle_certificate(certified_transfer_transaction.clone())
+        .handle_certificate(&certified_transfer_transaction)
         .await
         .unwrap();
     assert!(info.signed_effects.as_ref().unwrap().effects.status.is_ok());
 
     let info2 = authority_state
-        .handle_certificate(certified_transfer_transaction.clone())
+        .handle_certificate(&certified_transfer_transaction)
         .await
         .unwrap();
     assert!(info2
@@ -1376,7 +1377,7 @@ async fn test_move_call_insufficient_gas() {
         &authority_state,
     );
     let effects = authority_state
-        .handle_certificate(certified_transfer_transaction)
+        .handle_certificate(&certified_transfer_transaction)
         .await
         .unwrap()
         .signed_effects
@@ -1404,9 +1405,7 @@ async fn test_move_call_insufficient_gas() {
         gas_used - 5,
     );
 
-    let signature = Signature::new(&data, &recipient_key);
-    let transaction = Transaction::new(data, signature);
-
+    let transaction = to_sender_signed_transaction(data, &recipient_key);
     let tx_digest = *transaction.digest();
     let response = send_and_confirm_transaction(&authority_state, transaction)
         .await
@@ -1704,7 +1703,7 @@ async fn test_idempotent_reversed_confirmation() {
         &authority_state,
     );
     let result1 = authority_state
-        .handle_certificate(certified_transfer_transaction.clone())
+        .handle_certificate(&certified_transfer_transaction)
         .await;
     assert!(result1.is_ok());
     let result2 = authority_state
@@ -1763,7 +1762,7 @@ async fn test_change_epoch_transaction() {
         .unwrap()
         .unwrap();
     let result = authority_state
-        .handle_certificate(certificate)
+        .handle_certificate(&certificate)
         .await
         .unwrap();
     assert!(result.signed_effects.unwrap().effects.status.is_ok());
@@ -1787,10 +1786,9 @@ async fn test_transfer_sui_no_amount() {
         gas_object.compute_object_reference(),
         MAX_GAS,
     );
-    let signature = Signature::new(&tx_data, &sender_key);
-    let transaction = Transaction::new(tx_data, signature);
 
     // Make sure transaction handling works as usual.
+    let transaction = to_sender_signed_transaction(tx_data, &sender_key);
     authority_state
         .handle_transaction(transaction.clone())
         .await
@@ -1798,7 +1796,7 @@ async fn test_transfer_sui_no_amount() {
 
     let certificate = init_certified_transaction(transaction, &authority_state);
     let response = authority_state
-        .handle_certificate(certificate)
+        .handle_certificate(&certificate)
         .await
         .unwrap();
     let effects = response.signed_effects.unwrap().effects;
@@ -1838,12 +1836,10 @@ async fn test_transfer_sui_with_amount() {
         gas_object.compute_object_reference(),
         MAX_GAS,
     );
-    let signature = Signature::new(&tx_data, &sender_key);
-    let transaction = Transaction::new(tx_data, signature);
-
+    let transaction = to_sender_signed_transaction(tx_data, &sender_key);
     let certificate = init_certified_transaction(transaction, &authority_state);
     let response = authority_state
-        .handle_certificate(certificate)
+        .handle_certificate(&certificate)
         .await
         .unwrap();
     let effects = response.signed_effects.unwrap().effects;
@@ -1892,13 +1888,12 @@ async fn test_store_revert_state_update() {
         gas_object.compute_object_reference(),
         MAX_GAS,
     );
-    let signature = Signature::new(&tx_data, &sender_key);
-    let transaction = Transaction::new(tx_data, signature);
 
+    let transaction = to_sender_signed_transaction(tx_data, &sender_key);
     let certificate = init_certified_transaction(transaction, &authority_state);
     let tx_digest = *certificate.digest();
     authority_state
-        .handle_certificate(certificate)
+        .handle_certificate(&certificate)
         .await
         .unwrap();
 
@@ -2072,8 +2067,7 @@ pub fn init_transfer_transaction(
     gas_object_ref: ObjectRef,
 ) -> Transaction {
     let data = TransactionData::new_transfer(recipient, object_ref, sender, gas_object_ref, 10000);
-    let signature = Signature::new(&data, secret);
-    Transaction::new(data, signature)
+    to_sender_signed_transaction(data, secret)
 }
 
 #[cfg(test)]
@@ -2111,18 +2105,16 @@ fn init_certified_transaction(
 
 #[cfg(test)]
 async fn send_consensus(authority: &AuthorityState, cert: &CertifiedTransaction) {
-    authority
-        .handle_consensus_transaction(
-            // TODO [2533]: use this once integrating Narwhal reconfiguration
-            &narwhal_consensus::ConsensusOutput {
-                certificate: narwhal_types::Certificate::default(),
-                consensus_index: narwhal_types::SequenceNumber::default(),
-            },
-            /* last_consensus_index */ ExecutionIndices::default(),
-            ConsensusTransaction::new_certificate_message(&authority.name, cert.clone()),
-        )
-        .await
-        .unwrap();
+    let transaction = SequencedConsensusTransaction::new_test(
+        ConsensusTransaction::new_certificate_message(&authority.name, cert.clone()),
+    );
+
+    if let Ok(transaction) = authority.verify_consensus_transaction(transaction) {
+        authority
+            .handle_consensus_transaction(transaction)
+            .await
+            .unwrap();
+    }
 }
 
 pub async fn call_move(
@@ -2180,9 +2172,7 @@ pub async fn call_move_with_shared(
         MAX_GAS,
     );
 
-    let signature = Signature::new(&data, sender_key);
-    let transaction = Transaction::new(data, signature);
-
+    let transaction = to_sender_signed_transaction(data, sender_key);
     let response =
         send_and_confirm_transaction_with_shared(authority, transaction, with_shared).await?;
     Ok(response.signed_effects.unwrap().effects)
@@ -2240,8 +2230,8 @@ async fn make_test_transaction(
         ],
         MAX_GAS,
     );
-    let signature = Signature::new(&data, sender_key);
-    let transaction = Transaction::new(data, signature);
+
+    let transaction = to_sender_signed_transaction(data, sender_key);
 
     let committee = authorities[0].committee.load();
     let mut sig = SignatureAggregator::try_new(transaction.clone(), &committee).unwrap();
@@ -2296,7 +2286,7 @@ async fn shared_object() {
     let transaction_digest = certificate.digest();
 
     // Sending the certificate now fails since it was not sequenced.
-    let result = authority.handle_certificate(certificate.clone()).await;
+    let result = authority.handle_certificate(&certificate).await;
     assert!(
         matches!(
             result,
@@ -2319,10 +2309,7 @@ async fn shared_object() {
 
     // Finally process the certificate and execute the contract. Ensure that the
     // shared object lock is cleaned up and that its sequence number increased.
-    authority
-        .handle_certificate(certificate.clone())
-        .await
-        .unwrap();
+    authority.handle_certificate(&certificate).await.unwrap();
 
     let shared_object_lock = authority
         .db()
@@ -2385,7 +2372,7 @@ async fn test_consensus_message_processed() {
         if let TransactionInfoResponse {
             signed_effects: Some(effects),
             ..
-        } = authority.handle_certificate(cert.clone()).await.unwrap()
+        } = authority.handle_certificate(cert).await.unwrap()
         {
             effects
         } else {
@@ -2427,7 +2414,7 @@ async fn test_consensus_message_processed() {
                 .unwrap();
             authority2
                 .database
-                .tables
+                .perpetual_tables
                 .effects
                 .get(transaction_digest)
                 .unwrap()

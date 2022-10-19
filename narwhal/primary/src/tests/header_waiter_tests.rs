@@ -1,4 +1,4 @@
-// Copyright (c) 2022, Mysten Labs, Inc.
+// Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 use crate::{
     common::{create_db_stores, worker_listener},
@@ -6,7 +6,7 @@ use crate::{
     metrics::PrimaryMetrics,
 };
 
-use fastcrypto::{traits::KeyPair, Hash};
+use fastcrypto::{hash::Hash, traits::KeyPair};
 use network::P2pNetwork;
 use prometheus::Registry;
 use std::{sync::Arc, time::Duration};
@@ -48,8 +48,6 @@ async fn successfully_synchronize_batches() {
         payload_store.clone(),
         rx_consensus_round_updates,
         gc_depth,
-        /* sync_retry_delay */ Duration::from_secs(5),
-        /* sync_retry_nodes */ 3,
         rx_reconfigure,
         rx_synchronizer,
         tx_core,

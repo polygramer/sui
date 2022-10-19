@@ -1,4 +1,4 @@
-// Copyright (c) 2022, Mysten Labs, Inc.
+// Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::{authority::AuthorityState, authority_client::AuthorityAPI, safe_client::SafeClient};
@@ -325,7 +325,6 @@ impl GossipDigestHandler {
         if let Some(certificate) = response.certified_transaction {
             let digest = *certificate.digest();
             state
-                .database
                 .add_pending_certificates(vec![(digest, Some(certificate))])
                 .tap_err(|e| error!(?digest, "add_pending_certificates failed: {}", e))?;
 

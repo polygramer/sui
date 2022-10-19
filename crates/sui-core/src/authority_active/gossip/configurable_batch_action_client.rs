@@ -1,12 +1,14 @@
 // Copyright (c) 2021, Facebook, Inc. and its affiliates
-// Copyright (c) 2022, Mysten Labs, Inc.
+// Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::authority::AuthorityState;
 use crate::authority_aggregator::authority_aggregator_tests::*;
 use crate::authority_aggregator::{AuthAggMetrics, AuthorityAggregator};
-use crate::authority_client::{AuthorityAPI, BatchInfoResponseItemStream};
-use crate::epoch::epoch_store::EpochStore;
+use crate::authority_client::{
+    AuthorityAPI, BatchInfoResponseItemStream, CheckpointStreamResponseItemStream,
+};
+use crate::epoch::committee_store::CommitteeStore;
 use crate::safe_client::SafeClient;
 use async_trait::async_trait;
 use std::borrow::Borrow;
@@ -21,8 +23,9 @@ use sui_types::crypto::{get_key_pair, AuthorityKeyPair};
 use sui_types::error::SuiError;
 use sui_types::messages::{
     AccountInfoRequest, AccountInfoResponse, BatchInfoRequest, BatchInfoResponseItem,
-    CertifiedTransaction, EpochRequest, EpochResponse, ObjectInfoRequest, ObjectInfoResponse,
-    Transaction, TransactionInfoRequest, TransactionInfoResponse,
+    CertifiedTransaction, CheckpointStreamRequest, CommitteeInfoRequest, CommitteeInfoResponse,
+    ObjectInfoRequest, ObjectInfoResponse, Transaction, TransactionInfoRequest,
+    TransactionInfoResponse,
 };
 use sui_types::messages_checkpoint::{CheckpointRequest, CheckpointResponse};
 use sui_types::object::Object;
@@ -100,7 +103,7 @@ impl AuthorityAPI for ConfigurableBatchActionClient {
         certificate: CertifiedTransaction,
     ) -> Result<TransactionInfoResponse, SuiError> {
         let state = self.state.clone();
-        state.handle_certificate(certificate).await
+        state.handle_certificate(&certificate).await
     }
 
     async fn handle_account_info_request(
@@ -186,6 +189,14 @@ impl AuthorityAPI for ConfigurableBatchActionClient {
         Ok(Box::pin(tokio_stream::iter(items)))
     }
 
+    async fn handle_checkpoint_stream(
+        &self,
+        request: CheckpointStreamRequest,
+    ) -> Result<CheckpointStreamResponseItemStream, SuiError> {
+        let stream = self.state.handle_checkpoint_streaming(request).await?;
+        Ok(Box::pin(stream))
+    }
+
     async fn handle_checkpoint(
         &self,
         request: CheckpointRequest,
@@ -194,9 +205,11 @@ impl AuthorityAPI for ConfigurableBatchActionClient {
         state.handle_checkpoint_request(&request)
     }
 
-    async fn handle_epoch(&self, request: EpochRequest) -> Result<EpochResponse, SuiError> {
-        let state = self.state.clone();
-        state.handle_epoch_request(&request)
+    async fn handle_committee_info_request(
+        &self,
+        request: CommitteeInfoRequest,
+    ) -> Result<CommitteeInfoResponse, SuiError> {
+        self.state.handle_committee_info_request(&request)
     }
 }
 
@@ -211,7 +224,7 @@ pub async fn init_configurable_authorities(
     use fastcrypto::traits::KeyPair;
     use sui_types::crypto::AccountKeyPair;
 
-    use crate::safe_client::SafeClientMetrics;
+    use crate::{authority_client::NetworkAuthorityClientMetrics, safe_client::SafeClientMetrics};
 
     let authority_count = 4;
     let (addr1, key1): (_, AccountKeyPair) = get_key_pair();
@@ -248,12 +261,12 @@ pub async fn init_configurable_authorities(
         }
         states.push(client.state.clone());
         names.push(authority_name);
-        let epoch_store = client.state.epoch_store().clone();
+        let committee_store = client.state.committee_store().clone();
         clients.push(SafeClient::new(
             client,
-            epoch_store,
+            committee_store,
             authority_name,
-            SafeClientMetrics::new_for_tests(),
+            Arc::new(SafeClientMetrics::new_for_tests()),
         ));
     }
 
@@ -330,13 +343,14 @@ pub async fn init_configurable_authorities(
         .into_iter()
         .map(|(name, client)| (name, client.authority_client().clone()))
         .collect();
-    let epoch_store = Arc::new(EpochStore::new_for_testing(&committee));
+    let committee_store = Arc::new(CommitteeStore::new_for_testing(&committee));
     let net = AuthorityAggregator::new(
         committee,
-        epoch_store,
+        committee_store,
         authority_clients,
         AuthAggMetrics::new_for_tests(),
-        SafeClientMetrics::new_for_tests(),
+        Arc::new(SafeClientMetrics::new_for_tests()),
+        Arc::new(NetworkAuthorityClientMetrics::new_for_tests()),
     );
     (net, states, executed_digests)
 }

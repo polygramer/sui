@@ -1,12 +1,12 @@
-// Copyright (c) 2022, Mysten Labs, Inc.
+// Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 use clap::*;
 
 #[derive(Parser, Clone, ArgEnum)]
 pub enum Env {
-    DevNet,
+    Devnet,
     Staging,
-    Continuous,
+    Ci,
     Testnet,
     CustomRemote,
     NewLocal,
