@@ -64,10 +64,16 @@ impl TestCallArg {
 
     async fn call_arg_from_id(object_id: ObjectID, state: &AuthorityState) -> ObjectArg {
         let object = state.get_object(&object_id).await.unwrap().unwrap();
-        if object.is_shared() {
-            ObjectArg::SharedObject(object_id)
-        } else {
-            ObjectArg::ImmOrOwnedObject(object.compute_object_reference())
+        match &object.owner {
+            Owner::AddressOwner(_) | Owner::ObjectOwner(_) | Owner::Immutable => {
+                ObjectArg::ImmOrOwnedObject(object.compute_object_reference())
+            }
+            Owner::Shared {
+                initial_shared_version,
+            } => ObjectArg::SharedObject {
+                id: object_id,
+                initial_shared_version: *initial_shared_version,
+            },
         }
     }
 }
@@ -121,8 +127,15 @@ async fn construct_shared_object_transaction_with_sequence_number(
 
         let content = GasCoin::new(shared_object_id, 10);
         let obj = MoveObject::new_gas_coin(sequence_number, content.to_bcs_bytes());
-        Object::new_move(obj, Owner::Shared, TransactionDigest::genesis())
+        Object::new_move(
+            obj,
+            Owner::Shared {
+                initial_shared_version: sequence_number,
+            },
+            TransactionDigest::genesis(),
+        )
     };
+    let initial_shared_version = shared_object.version();
     let authority = init_state_with_objects(vec![gas_object, shared_object]).await;
 
     // Make a sample transaction.
@@ -139,7 +152,10 @@ async fn construct_shared_object_transaction_with_sequence_number(
         gas_object_ref,
         /* args */
         vec![
-            CallArg::Object(ObjectArg::SharedObject(shared_object_id)),
+            CallArg::Object(ObjectArg::SharedObject {
+                id: shared_object_id,
+                initial_shared_version,
+            }),
             CallArg::Pure(16u64.to_le_bytes().to_vec()),
             CallArg::Pure(bcs::to_bytes(&AccountAddress::from(sender)).unwrap()),
         ],
@@ -1143,8 +1159,12 @@ async fn test_handle_certificate_interrupted_retry() {
 
         let content = GasCoin::new(shared_object_id, 10);
         let obj = MoveObject::new_gas_coin(OBJECT_START_VERSION, content.to_bcs_bytes());
-        Object::new_move(obj, Owner::Shared, TransactionDigest::genesis())
+        let owner = Owner::Shared {
+            initial_shared_version: obj.version(),
+        };
+        Object::new_move(obj, owner, TransactionDigest::genesis())
     };
+    let initial_shared_version = shared_object.version();
 
     authority_state.insert_genesis_object(shared_object).await;
 
@@ -1161,6 +1181,7 @@ async fn test_handle_certificate_interrupted_retry() {
             &sender,
             &sender_key,
             shared_object_id,
+            initial_shared_version,
             &gas_object.compute_object_reference(),
             &[&authority_state],
             16,
@@ -1649,7 +1670,7 @@ async fn test_authority_persist() {
     fs::create_dir(&path).unwrap();
 
     // Create an authority
-    let store = Arc::new(AuthorityStore::open(&path, None));
+    let store = Arc::new(AuthorityStore::open(&path, None).unwrap());
     let authority =
         crate::authority_batch::batch_tests::init_state(committee, authority_key, store).await;
 
@@ -1670,7 +1691,7 @@ async fn test_authority_persist() {
         crate::authority_batch::batch_tests::init_state_parameters_from_rng(
             &mut StdRng::from_seed(seed),
         );
-    let store = Arc::new(AuthorityStore::open(&path, None));
+    let store = Arc::new(AuthorityStore::open(&path, None).unwrap());
     let authority2 =
         crate::authority_batch::batch_tests::init_state(committee, authority_key, store).await;
     let obj2 = authority2.get_object(&object_id).await.unwrap().unwrap();
@@ -1739,6 +1760,7 @@ async fn test_change_epoch_transaction() {
         1,
         100,
         100,
+        0,
         authority_state.name,
         &*authority_state.secret,
     );
@@ -2207,6 +2229,7 @@ async fn make_test_transaction(
     sender: &SuiAddress,
     sender_key: &AccountKeyPair,
     shared_object_id: ObjectID,
+    shared_object_initial_shared_version: SequenceNumber,
     gas_object_ref: &ObjectRef,
     authorities: &[&AuthorityState],
     arg_value: u64,
@@ -2225,7 +2248,10 @@ async fn make_test_transaction(
         *gas_object_ref,
         /* args */
         vec![
-            CallArg::Object(ObjectArg::SharedObject(shared_object_id)),
+            CallArg::Object(ObjectArg::SharedObject {
+                id: shared_object_id,
+                initial_shared_version: shared_object_initial_shared_version,
+            }),
             CallArg::Pure(arg_value.to_le_bytes().to_vec()),
         ],
         MAX_GAS,
@@ -2269,8 +2295,12 @@ async fn shared_object() {
 
         let content = GasCoin::new(shared_object_id, 10);
         let obj = MoveObject::new_gas_coin(OBJECT_START_VERSION, content.to_bcs_bytes());
-        Object::new_move(obj, Owner::Shared, TransactionDigest::genesis())
+        let owner = Owner::Shared {
+            initial_shared_version: obj.version(),
+        };
+        Object::new_move(obj, owner, TransactionDigest::genesis())
     };
+    let initial_shared_version = shared_object.version();
 
     let authority = init_state_with_objects(vec![gas_object, shared_object]).await;
 
@@ -2278,6 +2308,7 @@ async fn shared_object() {
         &sender,
         &keypair,
         shared_object_id,
+        initial_shared_version,
         &gas_object_ref,
         &[&authority],
         16,
@@ -2288,11 +2319,7 @@ async fn shared_object() {
     // Sending the certificate now fails since it was not sequenced.
     let result = authority.handle_certificate(&certificate).await;
     assert!(
-        matches!(
-            result,
-            Err(SuiError::ObjectErrors { ref errors })
-                if errors.len() == 1 && matches!(errors[0], SuiError::SharedObjectLockNotSetError)
-        ),
+        matches!(result, Err(SuiError::SharedObjectLockNotSetError)),
         "{:#?}",
         result
     );
@@ -2351,8 +2378,12 @@ async fn test_consensus_message_processed() {
 
         let content = GasCoin::new(shared_object_id, 10);
         let obj = MoveObject::new_gas_coin(OBJECT_START_VERSION, content.to_bcs_bytes());
-        Object::new_move(obj, Owner::Shared, TransactionDigest::genesis())
+        let owner = Owner::Shared {
+            initial_shared_version: obj.version(),
+        };
+        Object::new_move(obj, owner, TransactionDigest::genesis())
     };
+    let initial_shared_version = shared_object.version();
 
     let authority1 = init_state_with_objects_and_committee(
         vec![gas_object.clone(), shared_object.clone()],
@@ -2387,6 +2418,7 @@ async fn test_consensus_message_processed() {
             &sender,
             &keypair,
             shared_object_id,
+            initial_shared_version,
             &gas_object_ref,
             &[&authority1, &authority2],
             Uniform::from(0..100000).sample(&mut rng),
